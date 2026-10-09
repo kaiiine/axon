@@ -15,14 +15,14 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from src.orchestrator.envoi import (
+from src.orchestrator.noeuds.envoi import (
     ANNULER,
     ENVOYER,
     MODIFIER,
     envoi_attendu,
     envoyer,
 )
-from src.orchestrator.hitl import ENVOI, demande_en_attente, reponse
+from src.orchestrator.commun.hitl import ENVOI, demande_en_attente, reponse
 
 
 class _Etat(TypedDict):

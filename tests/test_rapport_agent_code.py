@@ -20,7 +20,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from src.agents.coding import noeud
-from src.orchestrator.note_interne import est_interne
+from src.orchestrator.commun.note_interne import est_interne
 
 RAPPORT = ("[SPECIALIST-TRACE]\ncwd:/home/kaine\nfiles:/tmp/axon-essai/tri.py\n"
            "[/SPECIALIST-TRACE]\n"
@@ -109,7 +109,7 @@ def test_un_vrai_tour_dutilisateur_nest_pas_marque():
 
 
 def test_la_relecture_ne_rejoue_pas_les_notes_internes():
-    from src.orchestrator.note_interne import note
+    from src.orchestrator.commun.note_interne import note
     from src.infra.checkpoint import _text_of  # noqa: F401 — garde l'import stable
 
     interne = note("L'agent de code a terminé.")

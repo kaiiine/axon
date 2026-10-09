@@ -14,10 +14,13 @@ _ADVISOR = pathlib.Path(__file__).resolve().parents[1] / "src" / "agents" / "qua
 # la frontière de DOMAINE `betting_engine.live_batch`, jamais l'adaptateur CLI (Q4).
 _FORBIDDEN = (
     "langgraph", "langchain", "click", "fastapi",
-    "src.orchestrator", "src.ui", "src.api",
+    "src.orchestrator", "src.ui",
     "src.agents.quant.tools",
     "src.agents.quant.betting_engine.cli",
 )
+# `src.api` a quitté cette liste avec le paquet lui-même : l'endpoint
+# compatible OpenAI a été supprimé. `fastapi` y reste — c'est un bannissement
+# de framework, valable même si plus personne ne l'installe aujourd'hui.
 
 
 def _imported_modules(tree: ast.AST):

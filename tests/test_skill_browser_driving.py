@@ -39,7 +39,7 @@ def test_le_skill_se_charge():
 
 def test_sa_description_alimente_le_routage_des_skills():
     """Les ancres du groupe `skills` sont les DESCRIPTIONS, pas les noms."""
-    from src.orchestrator.tool_retriever import _skill_topics
+    from src.orchestrator.routage.tool_retriever import _skill_topics
 
     ancres = " ".join(_skill_topics()).lower()
     assert "playwright" in ancres
@@ -54,8 +54,8 @@ def test_une_intention_de_navigation_atteint_load_skill(requete):
     """« remplis le formulaire de contact » n'y figure pas : mesuré, il ne route
     pas. La description du skill est en anglais comme celles du registre, et
     aucun de ses mots ne rapproche cette tournure française. Connu, pas masqué."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     outils = {t.name for t in ToolRetriever(build_all_tools()).get(requete)}
     assert "load_skill" in outils, f"« {requete} » n'atteint aucun skill"
@@ -68,8 +68,8 @@ def test_une_intention_de_navigation_atteint_load_skill(requete):
 ])
 def test_le_quotidien_ne_charge_pas_de_skill(requete):
     """Un skill chargé coûte des tokens sur un tour qui n'en a pas besoin."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     outils = {t.name for t in ToolRetriever(build_all_tools()).get(requete)}
     assert "load_skill" not in outils

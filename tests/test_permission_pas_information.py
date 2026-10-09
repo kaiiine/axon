@@ -22,7 +22,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from src.agents.clarify.permission import demande_une_permission
-from src.orchestrator import clarification
+from src.orchestrator.noeuds import clarification
 
 
 @pytest.mark.parametrize("choix", [

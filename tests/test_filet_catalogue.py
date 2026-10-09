@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator import catalogue
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.routage import catalogue
+from src.orchestrator.routage.registry import build_all_tools
 
 
 @pytest.fixture(scope="module")

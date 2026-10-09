@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.graph import _demande_de_precision
+from src.orchestrator.modele.corrections import demande_de_precision as _demande_de_precision
 
 
 REAL_CASE = (
@@ -146,8 +146,8 @@ def test_sans_outil_de_flow_le_groupe_de_tete_ne_suffit_pas():
 def test_le_retriever_expose_le_groupe_de_tete():
     """La condition a besoin du rang 1. Le recalculer coûterait une recherche
     vectorielle par tour : `get()` le mémorise au passage."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever
 
     retriever = ToolRetriever(build_all_tools())
     retriever.get("envoie le récap dans le salon test-cron sur Slack")

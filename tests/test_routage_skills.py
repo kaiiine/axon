@@ -98,7 +98,7 @@ def test_le_preambule_survit_a_la_restriction():
 
 # ── le branchement ────────────────────────────────────────────────────────────
 def test_seul_load_skill_est_remplace():
-    from src.orchestrator.graph import _restreindre_les_skills
+    from src.orchestrator.noeuds.chat import _restreindre_les_skills
 
     class _Autre:
         name = "shell_run"
@@ -112,7 +112,7 @@ def test_seul_load_skill_est_remplace():
 
 
 def test_une_liste_sans_load_skill_est_rendue_telle_quelle():
-    from src.orchestrator.graph import _restreindre_les_skills
+    from src.orchestrator.noeuds.chat import _restreindre_les_skills
 
     class _Autre:
         name = "shell_run"

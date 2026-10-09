@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from src.orchestrator.hitl import CLARIFICATION, Demande, Question, demander
+from src.orchestrator.commun.hitl import CLARIFICATION, Demande, Question, demander
 
 #: Statut déclencheur. L'outil doit rendre ce statut ET une liste `missing`.
 STATUT = "CLARIFICATION_REQUIRED"
@@ -91,7 +91,7 @@ def apres_les_outils(state: dict) -> str:
         return "chatbot"
     dernier = messages[-1]
 
-    from src.orchestrator import confirmation
+    from src.orchestrator.noeuds import confirmation
 
     champs = champs_manquants(dernier)
     if champs and not deja_demande(messages[:-1], champs):
@@ -100,12 +100,12 @@ def apres_les_outils(state: dict) -> str:
     if confirmation.commande_a_confirmer(dernier):
         return "confirmer"
 
-    from src.orchestrator.revision import revision_attendue
+    from src.orchestrator.noeuds.revision import revision_attendue
 
     if revision_attendue(state):
         return "reviser"
 
-    from src.orchestrator.envoi import envoi_attendu
+    from src.orchestrator.noeuds.envoi import envoi_attendu
 
     if envoi_attendu(state):
         return "envoyer"

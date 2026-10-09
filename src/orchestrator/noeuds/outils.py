@@ -9,7 +9,7 @@ from __future__ import annotations
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import ToolNode
 
-from src.orchestrator.resilience import tool_error_to_message
+from src.orchestrator.modele.resilience import tool_error_to_message
 
 def _refus_mode_plan(tool_calls: list) -> list[ToolMessage]:
     """Le mode plan retirait les outils d'écriture de la LIAISON seulement.
@@ -141,4 +141,5 @@ class CachedToolNode:
 
         if refus:
             result = {**result, "messages": refus + list(result.get("messages", []))}
+
         return result

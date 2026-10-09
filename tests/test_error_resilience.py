@@ -19,7 +19,7 @@ import json
 import pytest
 
 from src.orchestrator import graph as graph_module
-from src.orchestrator.graph import tool_error_to_message
+from src.orchestrator.modele.resilience import tool_error_to_message
 
 SOURCE = inspect.getsource(graph_module)
 
@@ -67,7 +67,7 @@ def test_le_handler_est_bien_branche_sur_le_ToolNode():
     Vérifié sur l'OBJET construit, pas sur le texte du module : c'est
     l'extraction de `CachedToolNode` dans son propre fichier qui rend cette
     inspection possible, là où il fallait auparavant se rabattre sur un grep."""
-    from src.orchestrator.tool_node import CachedToolNode
+    from src.orchestrator.noeuds.outils import CachedToolNode
 
     noeud = CachedToolNode(tools=[])
 
@@ -101,7 +101,7 @@ class _LLM:
 
 
 def _invoquer(llm, **kw):
-    from src.orchestrator.invocation import invoke_with_recovery
+    from src.orchestrator.modele.invocation import invoke_with_recovery
 
     notes: list[str] = []
     defauts = dict(
@@ -127,7 +127,7 @@ def test_une_coupure_de_flux_est_reprise():
 def test_la_reprise_transitoire_finit_par_abandonner():
     """Borné : au-delà, la panne n'est plus transitoire et la masquer par des
     reprises indéfinies serait pire que de la signaler."""
-    from src.orchestrator.invocation import MAX_TRANSIENT_RETRIES
+    from src.orchestrator.modele.invocation import MAX_TRANSIENT_RETRIES
 
     coupure = Exception("connection reset")
     llm = _LLM(*[coupure] * (MAX_TRANSIENT_RETRIES + 1))
@@ -222,7 +222,7 @@ def test_chaque_strategie_est_journalisee(monkeypatch, erreur, strategie, rattra
     compter — et on ne saurait pas non plus ce qu'un correctif a changé."""
     entrees: list[tuple] = []
     monkeypatch.setattr(
-        "src.orchestrator.invocation._log_failure",
+        "src.orchestrator.modele.invocation._log_failure",
         lambda backend, exc, strat, ok: entrees.append((strat, ok)))
 
     _invoquer(_LLM(erreur))
@@ -235,7 +235,7 @@ def test_l_abandon_definitif_est_journalise_comme_non_rattrape(monkeypatch):
     masquerait précisément ce qu'on cherche à mesurer."""
     entrees: list[tuple] = []
     monkeypatch.setattr(
-        "src.orchestrator.invocation._log_failure",
+        "src.orchestrator.modele.invocation._log_failure",
         lambda backend, exc, strat, ok: entrees.append((strat, ok)))
 
     with pytest.raises(Exception):
@@ -288,7 +288,7 @@ def test_le_comptage_utilise_un_vrai_tokenizer():
     compressait bien avant d'en avoir besoin."""
     from langchain_core.messages import HumanMessage
 
-    from src.orchestrator.context import _CHARS_PAR_TOKEN_DEFAUT, _estimate_tokens
+    from src.orchestrator.modele.context import _CHARS_PAR_TOKEN_DEFAUT, _estimate_tokens
 
     texte = "Peux-tu envoyer le récapitulatif des incontournables de Nice sur Slack ?"
     reel = _estimate_tokens([HumanMessage(content=texte)])
@@ -302,7 +302,7 @@ def test_le_comptage_inclut_les_appels_d_outils():
     le texte : les ignorer sous-estimerait une conversation riche en outils."""
     from langchain_core.messages import AIMessage
 
-    from src.orchestrator.context import _estimate_tokens
+    from src.orchestrator.modele.context import _estimate_tokens
 
     nu = AIMessage(content="")
     avec = AIMessage(content="", tool_calls=[
@@ -318,7 +318,7 @@ def test_le_comptage_fonctionne_sans_tokenizer(monkeypatch):
     au caractère plutôt que de faire échouer un tour."""
     from langchain_core.messages import HumanMessage
 
-    from src.orchestrator import context
+    from src.orchestrator.modele import context
 
     context._encodeur.cache_clear()
     monkeypatch.setattr(context, "_encodeur", lambda: None)
@@ -331,7 +331,7 @@ def test_la_jauge_et_le_seuil_partagent_la_meme_table():
     """Deux tables identiques finissent toujours par diverger : l'une décide de
     compresser, l'autre affiche le remplissage, et l'utilisateur voit 60 % pendant
     qu'une compression se déclenche."""
-    from src.orchestrator.context import _CONTEXT_LIMITS
+    from src.orchestrator.modele.context import _CONTEXT_LIMITS
     from src.ui import token_gauge
 
     assert token_gauge._CONTEXT_LIMITS is _CONTEXT_LIMITS
@@ -341,7 +341,7 @@ def test_la_jauge_et_le_seuil_partagent_la_meme_table():
 def test_chaque_backend_declare_sa_fenetre(backend):
     """`mistral` manquait et retombait sur le défaut. Il tombait juste par
     chance — une absence qui donne le bon résultat ne se signale jamais."""
-    from src.orchestrator.context import _BACKEND_POLICY, _CONTEXT_LIMITS
+    from src.orchestrator.modele.context import _BACKEND_POLICY, _CONTEXT_LIMITS
 
     assert backend in _CONTEXT_LIMITS, f"{backend} sans fenêtre déclarée"
     assert backend in _BACKEND_POLICY, f"{backend} sans politique de compression"
@@ -362,7 +362,7 @@ def test_la_jauge_se_remplit_avec_la_fenetre_du_backend():
 def test_le_seuil_de_compression_reste_sous_la_fenetre():
     """Compresser après avoir dépassé la fenêtre ne sert à rien : le provider a
     déjà refusé."""
-    from src.orchestrator.context import _CONTEXT_LIMITS, _usable_budget
+    from src.orchestrator.modele.context import _CONTEXT_LIMITS, _usable_budget
 
     for backend, fenetre in _CONTEXT_LIMITS.items():
         assert _usable_budget(backend) < fenetre
@@ -392,7 +392,7 @@ def test_la_compression_s_execute_de_bout_en_bout():
     fonction était restée dans `graph.py` quand la compression a été extraite.
     Aucun test n'appelait `_compress_context`, donc rien ne l'a signalé — le
     découpage était vérifié par la suite, son exécution ne l'était pas."""
-    from src.orchestrator.context import _compress_context
+    from src.orchestrator.modele.context import _compress_context
 
     avant = _conversation(20)
 
@@ -404,7 +404,7 @@ def test_la_compression_s_execute_de_bout_en_bout():
 
 def test_la_compression_garde_les_messages_recents_intacts():
     """Compresser le présent ferait perdre le fil de la tâche en cours."""
-    from src.orchestrator.context import _backend_policy, _compress_context
+    from src.orchestrator.modele.context import _backend_policy, _compress_context
 
     avant = _conversation(20)
     garde = _backend_policy("ollama_cloud")["keep_recent"]
@@ -417,7 +417,7 @@ def test_la_compression_garde_les_messages_recents_intacts():
 
 def test_la_compression_ne_touche_pas_une_conversation_courte():
     """En dessous du seuil il n'y a rien à gagner, et un appel LLM à perdre."""
-    from src.orchestrator.context import _compress_context
+    from src.orchestrator.modele.context import _compress_context
 
     courte = _conversation(2)
 
@@ -430,7 +430,7 @@ def test_la_compression_ne_touche_pas_une_conversation_courte():
 def test_la_compression_fonctionne_sur_chaque_backend(backend):
     """Chaque backend a sa propre politique `keep_recent` : une clé manquante
     ferait échouer la compression pour ce backend seulement."""
-    from src.orchestrator.context import _compress_context
+    from src.orchestrator.modele.context import _compress_context
 
     apres, _ = _compress_context(_conversation(30), _LLMResume(), backend)
 

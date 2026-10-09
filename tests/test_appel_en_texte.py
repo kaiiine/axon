@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 
-from src.orchestrator.provider_quirks import outil_ecrit_en_json
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.modele.provider_quirks import outil_ecrit_en_json
+from src.orchestrator.routage.registry import build_all_tools
 
 OUTILS = build_all_tools()
 

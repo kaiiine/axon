@@ -114,6 +114,10 @@ STRUCTURED_TOOLS = frozenset({
     "parlay_analyze", "same_match_combo_analyze",
 })
 
+BETTING_TOOLS = STRUCTURED_TOOLS | frozenset({
+    "winamax_odds_fetch", "sports_stats_fetch",
+})
+
 
 def current_turn(messages: Sequence[Any]) -> list[Any]:
     """Messages produits depuis le dernier message humain."""
@@ -122,6 +126,22 @@ def current_turn(messages: Sequence[Any]) -> list[Any]:
         if _role(message) == "human":
             debut = index + 1
     return list(messages[debut:])
+
+
+def betting_tool_used(messages: Sequence[Any]) -> bool:
+    """Un outil de paris a-t-il répondu pendant le tour courant ?
+
+    Sert à borner le garde de domaine : un tour météo, code ou culture générale
+    n'a lancé aucun de ces outils, donc le garde paris n'a rien à y contrôler.
+    Vécu : « météo à Bourg-la-Reine » voyait sa réponse remplacée par
+    « DATA_UNAVAILABLE », le garde prenant les températures pour des faits de
+    pari non sourcés.
+    """
+    return any(
+        _role(message) == "tool"
+        and getattr(message, "name", None) in BETTING_TOOLS
+        for message in current_turn(messages)
+    )
 
 
 def has_structured_output(messages: Sequence[Any]) -> bool:

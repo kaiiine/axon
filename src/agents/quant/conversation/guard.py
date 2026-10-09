@@ -339,7 +339,7 @@ def _parle_de_pari(signaux: dict[str, bool], text: str) -> bool:
     if _CERTITUDE_CHIFFREE.search(text):
         return True
     try:
-        from src.orchestrator.tool_retriever import _money_intent
+        from src.orchestrator.routage.tool_retriever import _money_intent
         return _money_intent(text)
     except Exception:
         return False
@@ -419,6 +419,26 @@ def _asserts_opportunity(signaux: dict[str, bool]) -> bool:
         # abstient, mais la cote indique quand même un bon favori ».
         or signaux["recommande"]
     )
+
+
+def concerne_les_paris(text: str, messages) -> bool:
+    """Ce tour touche-t-il aux paris ? Sinon le garde n'a rien à protéger.
+
+    Deux voies, et il faut les DEUX parce qu'elles couvrent deux dangers :
+
+    - un outil de paris a tourné ce tour → le sujet EST le pari, explicitement ;
+    - le texte final porte des signaux de pari → le modèle a pu inventer un
+      conseil SANS lancer le moteur, et c'est justement le cas que le garde doit
+      attraper (borner sur le seul outil rouvrirait ce trou).
+
+    Une réponse météo, une explication de code, une question de culture générale
+    ne remplissent aucune des deux : le garde les laisse passer intactes.
+    """
+    from src.agents.quant.conversation.evidence import betting_tool_used
+
+    if betting_tool_used(messages):
+        return True
+    return _parle_de_pari(_claims(text), text)
 
 
 def enforce(

@@ -382,42 +382,8 @@ Generates flowcharts, sequence diagrams, class diagrams, ER diagrams, C4 contain
 Native notebook editing: reads cells with indices, edits cell-by-cell with HITL review, inserts new cells, runs and checks outputs. Never corrupts `.ipynb` JSON.
 
 ---
+## MCP client — external tools inside Axon
 
-## IDE integration (Zed, Cursor, Continue.dev)
-
-Axon exposes two independent servers for IDE use:
-
-### MCP server — tools for any LLM
-
-Exposes all Axon tools (filesystem, git, shell, search…) to Copilot, Claude, or any MCP-compatible LLM.
-
-```bash
-python src/mcp_server.py
-```
-
-**Zed** (`~/.config/zed/settings.json`):
-```json
-"context_servers": {
-  "axon": {
-    "command": {
-      "path": "/path/to/.venv/bin/python",
-      "args": ["/path/to/ai-agent/src/mcp_server.py"]
-    }
-  }
-}
-```
-
-**Claude Desktop** (`~/.config/claude/claude_desktop_config.json`):
-```json
-"mcpServers": {
-  "axon": {
-    "command": "/path/to/.venv/bin/python",
-    "args": ["/path/to/ai-agent/src/mcp_server.py"]
-  }
-}
-```
-
-### MCP client — external tools inside Axon
 
 The reverse direction: Axon connects to third-party MCP servers and their tools
 become indistinguishable from native ones — same routing, same execution path.
@@ -436,36 +402,6 @@ A failing MCP tool returns an explicit tool error rather than a result: some
 servers answer with `isError=False` while their backend is down, and the model
 must not reason on a failure message as if it were data.
 
-### API server — Axon as the AI
-
-Makes Axon itself the talking LLM in your IDE (OpenAI-compatible).
-
-```bash
-python src/api_server.py    # → http://127.0.0.1:8765/v1
-```
-
-**Zed** (`~/.config/zed/settings.json`):
-```json
-"language_models": {
-  "openai": {
-    "api_url": "http://127.0.0.1:8765/v1",
-    "available_models": [
-      {"name": "axon", "max_tokens": 128000, "max_output_tokens": 8192}
-    ]
-  }
-}
-```
-
-**Continue.dev** (`config.json`):
-```json
-{"models": [{"title": "Axon", "provider": "openai", "model": "axon",
-             "apiBase": "http://127.0.0.1:8765/v1", "apiKey": "axon"}]}
-```
-
-Slash commands available from Zed (prefix with a space to bypass Zed's own `/` picker):
-` /keys` · ` /backend gemini` · ` /model` · ` /graph` · ` /build project` · ` /help`
-
----
 
 ## Agents & integrations
 
@@ -669,9 +605,6 @@ ai-agent/
     │   └── prompts/               #   one file per prompt (orchestrator, spec review, cron…)
     ├── skills/                    # Skill loader and scoping (content lives in skills/)
     ├── mcp_client/                # MCP client: connection, adapter, registry, /mcp
-    ├── api/                       # OpenAI-compatible API server (models, streaming, commands)
-    ├── api_server.py              # FastAPI entry point (port 8765)
-    ├── mcp_server.py              # MCP stdio server (Zed, Claude Desktop, Cursor)
     ├── cron_daemon.py             # Scheduled task runner
     ├── infra/                     # Settings, cache, redactor, browser, auth, failure log
     └── agents/

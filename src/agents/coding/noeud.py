@@ -20,7 +20,7 @@ from typing import Any
 
 from langchain_core.messages import ToolMessage
 
-from src.orchestrator.note_interne import note
+from src.orchestrator.commun.note_interne import note
 
 MARQUEUR = "tache_de_code_demandee"
 

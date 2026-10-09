@@ -333,29 +333,15 @@ Once every param is known → call schedule_task immediately, no confirmation st
 
 _STUDY = """\
 ━━ STUDY CARDS & EXERCISES ━━
-When the user asks for a revision card, course summary, exercises or a quiz from a PDF or provided content:
-1. Generate the complete HTML in one go (embedded CSS, vanilla JS, no external dependencies)
-2. Call save_study_file(html="...", file_type="fiche"|"exo", filename="<subject>")
-
-MANDATORY DESIGN — Axon Slate Glass DA (cards):
-Dark/light theme via CSS custom properties. LIGHT by default (html without class). The .dark class activates dark. Toggle button in header "◑ Dark" / "☀ Light".
-Dark: --bg #0c0a08, WARM near-black · Light: --bg #f0e6d0, warm parchment
---accent: #ffaf00 dark / #b45309 light · --text: #f7f3ec dark / #292010 light
-Neutrals follow the accent's temperature: --muted #a29684 dark. A cool grey \
-(#94a3b8) under an amber accent reads dirty — never use one.
-ONE accent, graded in intensity. Never a different colour per card or per \
-section: that suggests a distinction which does not exist, and is what makes a \
-generated page look generated.
-Grid columns follow the ITEM COUNT, never a threshold — 1→1 2→2 3→3 4→2 5→3 \
-6→3. The last row must be full; an orphan card with a hole beside it reads as \
-a bug, not a layout.
-Glassmorphism on all cards: background var(--surface) · backdrop-filter blur(16px) · border 1px solid var(--surface-border)
-Semantic cards: border-left 3px + background var(--concept-bg/formula-bg/example-bg/danger-bg)
-ANTI scroll-x: never min-width on tables · div.table-wrapper overflow-x auto · grids auto-fit minmax(160px,1fr)
-
-Card: single linear page (no tabs). Sticky header + Print button. Covers ALL concepts: Key figures → Concepts/Definitions → Formulas → Full chapters → Distinctions/Pitfalls → Summary table. Interactive elements (accordions, flip cards) welcome if relevant.
-
-Exercises: MCQ with immediate feedback + explanation, open questions with reveal, thin accent progress bar, final score, navigation, Replay button.\
+When the user asks for a revision card, course summary, exercises or a quiz:
+Call save_study_file(content="...", file_type="fiche"|"exo", filename="<subject>")
+`content` is YOUR OWN structured recap of everything to cover — definitions, \
+models, distinctions, examples, likely exam points — written as thorough \
+notes, NOT as HTML. The tool renders it through the fiche/exo template, which \
+carries its own mandatory content-analysis and design rules — rules you have \
+not seen and should not improvise. Writing the HTML yourself (the `html=` \
+argument) skips that template entirely and reliably produces a thinner, \
+less precise page: use it only if you deliberately want to bypass the template.\
 """
 
 _PLAN_MODE = """\

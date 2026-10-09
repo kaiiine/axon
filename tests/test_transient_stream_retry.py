@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.invocation import MAX_TRANSIENT_RETRIES, classify
+from src.orchestrator.modele.invocation import MAX_TRANSIENT_RETRIES, classify
 
 
 @pytest.mark.parametrize("exc", [

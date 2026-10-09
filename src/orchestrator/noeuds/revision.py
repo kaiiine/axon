@@ -13,18 +13,15 @@ import json
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from src.orchestrator.hitl import DIFF, Demande, Question, demander
-from src.orchestrator.verification import consigne, verifier
+from src.orchestrator.commun.hitl import DIFF, Demande, Question, demander
+from src.orchestrator.commun.verification import consigne, verifier
 
 APPLIQUER, REFUSER, PRECISER = "Appliquer", "Refuser", "Préciser"
 
 #: Une décision prise dans un questionnaire est une entrée de l'utilisateur :
 #: elle arrive au modèle comme telle, jamais comme un `AIMessage` — que le TUI
 #: afficherait et que le modèle relirait comme son propre tour.
-def note_pour_le_modele(texte: str) -> HumanMessage:
-    from src.orchestrator.note_interne import note
-
-    return note(texte)
+from src.orchestrator.commun.note_interne import note_pour_le_modele  # noqa: E402,F401
 
 
 def rappel_du_plan(chemins: list[str]) -> str:

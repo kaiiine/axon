@@ -23,8 +23,8 @@ from unittest.mock import patch
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-import src.orchestrator.clarification as clarification
-from src.orchestrator.clarification import (
+import src.orchestrator.noeuds.clarification as clarification
+from src.orchestrator.noeuds.clarification import (
     appel_clarification, appels_clarification, appels_en_attente, clarifier_appel,
 )
 

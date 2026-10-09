@@ -68,26 +68,11 @@ BACKENDS: dict[str, Backend] = {
     "mistral": Backend(
         nom="mistral", fabrique="make_llm_mistral", champ_modele="mistral_model",
         cles=("MISTRAL_API_KEY", "MISTRAL_API_KEYS"),
-        modeles=("mistral-small-2603", "codestral-2508", "mistral-large-latest")),
+        modeles=("mistral-small-2603", "codestral-2508", "mistral-large-latest", "ministral-8b-2512", "ministral-14b-2512")),
     "nvidia": Backend(
         nom="nvidia", fabrique="make_llm_nvidia", champ_modele="nvidia_model",
         cles=("NVIDIA_API_KEY", "NVIDIA_API_KEYS"), gratuit=True,
         modeles=("meta/muse-glimmer-30b", "meta/llama-3.3-70b-instruct")),
-    # OpenRouter : compatible OpenAI, 21 modèles à 0 € au relevé du catalogue.
-    #
-    # La liste est celle qui a RÉPONDU, pas celle que le catalogue annonce. Six
-    # candidats éprouvés sur un appel d'outil réel — la boucle d'AXON en dépend,
-    # et `supported_parameters: tools` ne promet rien :
-    #
-    #     minimax/minimax-m3                    outils OK
-    #     nvidia/nemotron-3-ultra-550b-a55b     outils OK
-    #     nvidia/nemotron-3.5-lightning         outils OK
-    #     inclusionai/ling-3.0-flash-fin        outils OK
-    #     thinkingmachines/inkling              403 — accès refusé
-    #     google/gemma-4-26b-a4b-it             429 — fournisseur saturé
-    #
-    # Un quota `:free` est partagé : ces mêmes appels peuvent renvoyer 429 plus
-    # tard, d'où le pool de clés et l'ordre de repli.
     "openrouter": Backend(
         nom="openrouter", fabrique="make_llm_openrouter",
         champ_modele="openrouter_model",
@@ -110,13 +95,6 @@ def utilisables() -> list[str]:
             if not b.cles or any(os.environ.get(c, "").strip() for c in b.cles)]
 
 
-#: L'ordre dans lequel on se rabat quand un backend manque ou tombe.
-#:
-#: `noms()` rendait l'ordre de DÉCLARATION, qui place `ollama` en tête parce
-#: qu'il est le plus ancien. Tout ce qui choisissait « le premier disponible »
-#: tombait donc sur le modèle local — et un chiffre produit par un 4B local ne
-#: dit rien de ce que fera le modèle de production. Le local est un filet, pas
-#: un défaut : il vient en dernier, et il vient toujours, puisqu'il ne demande
 #: aucune clé.
 ORDRE_DE_REPLI: tuple[str, ...] = ("ollama_cloud", "gemini", "mistral", "ollama")
 

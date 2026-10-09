@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from src.orchestrator.hitl import (
+from src.orchestrator.commun.hitl import (
     ACCORD,
     REFUS,
     Demande,
@@ -165,7 +165,7 @@ def test_une_sortie_sans_interruption_ne_rend_aucune_demande():
 
 def test_un_appel_direct_de_clarification_est_converti_en_demande(monkeypatch):
     from langchain_core.messages import AIMessage
-    import src.orchestrator.clarification as clarification
+    import src.orchestrator.noeuds.clarification as clarification
 
     monkeypatch.setattr(clarification, "demander", lambda demande: ["choix"])
     appel = {"name": "ask_clarification",
@@ -251,7 +251,7 @@ def test_une_decision_arrive_comme_une_ENTREE_pas_comme_une_reponse():
     """
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from src.orchestrator import confirmation, envoi, revision
+    from src.orchestrator.noeuds import confirmation, envoi, revision
 
     for module in (envoi, revision, confirmation):
         assert isinstance(module.note_pour_le_modele("x"), HumanMessage), (
@@ -270,7 +270,7 @@ def test_un_refus_dit_au_modele_QUOI_FAIRE_pas_seulement_ce_qui_s_est_passe():
     from langgraph.graph import END, START, StateGraph
 
     from src.agents.shell import autorisation
-    from src.orchestrator.confirmation import NON, confirmer
+    from src.orchestrator.noeuds.confirmation import NON, confirmer
 
     class Etat(TypedDict):
         messages: list
@@ -346,7 +346,7 @@ class TestAppelDeClarification:
         return AIMessage("", tool_calls=appels)
 
     def test_lappel_est_reconnu(self):
-        from src.orchestrator.clarification import appel_clarification
+        from src.orchestrator.noeuds.clarification import appel_clarification
 
         appel = {"name": "ask_clarification", "id": "c1",
                  "args": {"questions": [{"question": "Quoi ?"}]}}
@@ -354,7 +354,7 @@ class TestAppelDeClarification:
         assert trouve is not None and trouve["id"] == "c1"
 
     def test_un_autre_outil_nest_pas_confondu(self):
-        from src.orchestrator.clarification import appel_clarification
+        from src.orchestrator.noeuds.clarification import appel_clarification
 
         assert appel_clarification(
             self._lot([{"name": "get_current_time", "id": "t1", "args": {}}])) is None
@@ -364,7 +364,7 @@ class TestAppelDeClarification:
         résultat, et un fournisseur refuse un tour aux paires déséquilibrées."""
         from langchain_core.messages import ToolMessage
 
-        from src.orchestrator.clarification import appels_en_attente
+        from src.orchestrator.noeuds.clarification import appels_en_attente
 
         lot = self._lot([{"name": "get_current_time", "id": "t1", "args": {}},
                          {"name": "ask_clarification", "id": "c1", "args": {}}])
@@ -374,7 +374,7 @@ class TestAppelDeClarification:
         assert not appels_en_attente({"messages": [lot, repondu, tout]})
 
     def test_une_question_vide_ne_bloque_pas_le_tour(self):
-        from src.orchestrator.clarification import clarifier_appel
+        from src.orchestrator.noeuds.clarification import clarifier_appel
 
         sortie = clarifier_appel({"messages": [self._lot(
             [{"name": "ask_clarification", "id": "c1", "args": {"questions": []}}])]})
@@ -384,7 +384,7 @@ class TestAppelDeClarification:
         """`clarifier_appel` a posé la question ; l'exécuter reposerait la même."""
         from langchain_core.messages import ToolMessage
 
-        from src.orchestrator.tool_node import CachedToolNode
+        from src.orchestrator.noeuds.outils import CachedToolNode
 
         lot = self._lot([{"name": "ask_clarification", "id": "c1", "args": {}}])
         repondu = ToolMessage(content='{"answers": {}}', tool_call_id="c1",

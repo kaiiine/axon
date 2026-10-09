@@ -81,8 +81,8 @@ def test_le_specialist_de_code_suit_le_backend_actif(backend):
 
 
 @pytest.mark.parametrize("table, module", [
-    ("_CONTEXT_LIMITS", "src.orchestrator.context"),
-    ("_BACKEND_POLICY", "src.orchestrator.context"),
+    ("_CONTEXT_LIMITS", "src.orchestrator.modele.context"),
+    ("_BACKEND_POLICY", "src.orchestrator.modele.context"),
 ])
 def test_chaque_backend_declare_sa_fenetre_et_sa_politique(table, module):
     """Ces tables se rabattent proprement sur un défaut — donc rien ne casse,

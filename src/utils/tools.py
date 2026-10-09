@@ -1,7 +1,7 @@
 # src/utils/tools_utils.py
 from typing import List
 from langchain_core.tools import BaseTool
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.routage.registry import build_all_tools
 
 
 def get_tool_names() -> List[str]:

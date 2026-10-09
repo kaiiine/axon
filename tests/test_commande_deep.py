@@ -38,7 +38,7 @@ def test_elle_est_traitee_avant_la_porte_des_slashs():
 
 
 def test_loutil_et_le_noeud_existent_bien():
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
 
     assert "deep_research" in {o.name for o in build_all_tools()}
     from src.agents.deep.noeud import approfondir  # noqa: F401

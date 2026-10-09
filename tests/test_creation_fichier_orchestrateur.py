@@ -107,8 +107,8 @@ def test_une_demande_de_modification_met_lecriture_a_portee():
     range TOUJOURS les lectures devant — `edit_file` sortait 7e sur 7, sur
     « commente ces deux lignes » comme sur « lis le fichier ». Tant qu'on prenait
     le groupe entier ça ne se voyait pas ; depuis le budget, l'écriture est coupée."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     retriever = ToolRetriever(build_all_tools())
     for requete in ("commente ces deux lignes dans ~/.config/hypr/keybindings.conf",
@@ -120,7 +120,7 @@ def test_une_demande_de_modification_met_lecriture_a_portee():
 
 
 def test_la_porte_decriture_ne_souvre_pas_sur_une_lecture():
-    from src.orchestrator.tool_retriever import _ecriture_intent
+    from src.orchestrator.routage.tool_retriever import _ecriture_intent
 
     for requete in ("lis le fichier src/main.py",
                     "cherche le mot TODO dans le projet",

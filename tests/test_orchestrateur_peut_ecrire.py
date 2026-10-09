@@ -35,7 +35,7 @@ def _is_file_write(commande: str) -> bool:
 
 @pytest.fixture(scope="module")
 def outils_orchestrateur() -> set[str]:
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
     return {t.name for t in build_all_tools()}
 
 
@@ -89,8 +89,8 @@ def test_aucune_reponse_du_garde_ne_nomme_un_outil_fantome(commande, outils_orch
 def test_modifier_un_fichier_de_config_route_les_outils_d_ecriture():
     """Un fichier de configuration n'est pas « un projet de code » : la demande
     ne doit pas dépendre de `run_coding_agent` pour aboutir."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     retriever = ToolRetriever(build_all_tools())
     for requete in (
@@ -105,8 +105,8 @@ def test_modifier_un_fichier_de_config_route_les_outils_d_ecriture():
 def test_le_specialist_garde_la_main_sur_un_projet_de_code():
     """L'orchestrateur ne doit pas se mettre à éditer du code lui-même : quand
     `coding` gagne l'étage 1, les outils de fichier lui sont retirés."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     retriever = ToolRetriever(build_all_tools())
     outils = {t.name for t in retriever.get("corrige le bug dans mon application next.js")}
@@ -134,8 +134,8 @@ def test_les_changements_proposes_sont_bien_consommes():
     assert "pending_changes" in source and "auto_write_all" in source, (
         "le mode auto n'écrit plus rien : les propositions s'empileraient")
 
-    from src.orchestrator import revision
-    from src.orchestrator.clarification import apres_les_outils
+    from src.orchestrator.noeuds import revision
+    from src.orchestrator.noeuds.clarification import apres_les_outils
 
     assert "reviser" in inspect.getsource(apres_les_outils), (
         "le routeur ne mène jamais à la revue : en mode `ask`, plus rien ne "

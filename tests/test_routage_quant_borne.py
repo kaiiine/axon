@@ -29,8 +29,8 @@ séparent proprement à 3 :
 """
 import pytest
 
-from src.orchestrator.registry import build_all_tools
-from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever, _money_intent
+from src.orchestrator.routage.registry import build_all_tools
+from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever, _money_intent
 
 PARIS = {"betting_recommend", "winamax_odds_fetch", "sports_stats_fetch",
          "probability_compute", "ev_analyze", "parlay_analyze",

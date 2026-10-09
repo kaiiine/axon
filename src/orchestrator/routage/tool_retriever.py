@@ -485,7 +485,8 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "jira_get_workload", "jira_create_issue", "jira_create_issues_bulk",
                "jira_assign_issue", "jira_update_issue", "jira_get_issue_comments",
                "jira_search_users", "jira_move_issue", "jira_delete_issue",
-               "jira_link_to_epic"),
+               "jira_link_to_epic", "jira_list_issue_types",
+               "jira_update_issues_bulk"),
         keywords=frozenset({"jira", "sprint", "backlog"}),
     ),
     # `news` est séparé de `search` alors que les deux interrogent le web. Mesuré :

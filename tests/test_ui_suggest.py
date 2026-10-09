@@ -207,7 +207,7 @@ def _saisir(frappes: list[tuple[str, str]], historique: list[str]) -> str:
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    from src.ui.streaming import build_session
+    from src.ui.saisie import build_session
 
     memoire = InMemoryHistory()
     for ligne in historique:

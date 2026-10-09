@@ -27,7 +27,7 @@ import pytest
 from src.agents.coding import tools as outils
 from src.agents.coding.pending import (FileChange, dev_plan, pending_changes,
                                        recent_tools)
-from src.orchestrator import revision
+from src.orchestrator.noeuds import revision
 
 
 @pytest.fixture(autouse=True)

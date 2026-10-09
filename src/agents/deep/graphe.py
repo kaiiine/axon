@@ -22,6 +22,25 @@ from langgraph.types import Send
 SOUS_QUESTIONS_MAX = 5
 TOURS_MAX = 2
 
+#: Un domaine par lien markdown dans le rapport d'une recherche.
+_URL_RE = re.compile(r"https?://([^\s/\)]+)")
+
+
+def domaines_de(contenu: str) -> list[str]:
+    """Les domaines RÉELLEMENT présents dans un rapport de recherche, dans
+    l'ordre d'apparition, sans doublon.
+
+    C'est la source unique pour deux usages qui doivent rester d'accord : la
+    bibliographie de fin de synthèse et l'affichage en direct côté UI. Vécu :
+    interrogées séparément, les deux dérivaient — l'UI montrait les domaines
+    réels pendant la recherche, et la bibliographie finale, écrite par le
+    modèle sur un texte fusionnant dix rapports aux citations 【1】…【6】
+    remises à zéro à chaque appel, en INVENTAIT deux qui n'avaient jamais été
+    consultés (`app.studyraid.com`, `learntutorials.net` — vécu sur « c'est
+    quoi des quaternions en Unity »).
+    """
+    return list(dict.fromkeys(_URL_RE.findall(contenu or "")))
+
 
 class Etat(TypedDict, total=False):
     question: str
@@ -65,8 +84,15 @@ def construire(repondre: Callable[[str], str], chercher: Callable[[str], str]):
         try:
             contenu = chercher(sujet)
         except Exception as erreur:      # noqa: BLE001 — une source morte n'arrête rien
-            contenu = f"[recherche échouée : {erreur}]"
-        return {"trouvailles": [{"sujet": sujet, "contenu": contenu}]}
+            # `str(erreur)` peut être vide (ex. `ConnectionError()` sans
+            # message) — le type seul reste un indice exploitable à l'écran,
+            # plutôt qu'un « — échec : » qui ne dit toujours rien.
+            detail = str(erreur) or type(erreur).__name__
+            contenu = f"[recherche échouée : {detail}]"
+        # Extraits UNE FOIS, ici — pas redevinés plus tard sur un texte fusionné
+        # où les citations numérotées de dix rapports se chevauchent.
+        return {"trouvailles": [{"sujet": sujet, "contenu": contenu,
+                                 "domaines": domaines_de(contenu)}]}
 
     def combler(etat: Etat) -> dict:
         """Ce qui manque encore, s'il reste un tour."""
@@ -89,13 +115,30 @@ def construire(repondre: Callable[[str], str], chercher: Callable[[str], str]):
         return eclater(etat) if etat.get("a_chercher") else "synthetiser"
 
     def synthetiser(etat: Etat) -> dict:
-        sources = "\n\n".join(f"## {t['sujet']}\n{t['contenu']}"
-                              for t in etat.get("trouvailles", []))
+        trouvailles = etat.get("trouvailles", [])
+        sources = "\n\n".join(f"## {t['sujet']}\n{t['contenu']}" for t in trouvailles)
         rapport = repondre(
             f"Rédige une synthèse de la question suivante à partir des seules "
-            f"informations ci-dessous. Cite les sources telles qu'elles "
-            f"apparaissent. N'ajoute rien qui n'y figure pas ; si un point reste "
-            f"sans réponse, dis-le.\n\nQuestion : {etat['question']}\n\n{sources}")
+            f"informations ci-dessous. Cite le DOMAINE entre parenthèses après "
+            f"chaque fait — ex. « … évite le gimbal lock (docs.unity3d.com) » —"
+            f"jamais de numéro : plusieurs rapports sont fusionnés ci-dessous, "
+            f"chacun avec sa propre numérotation, et un numéro ne désignerait "
+            f"donc plus rien de fiable. N'ajoute pas de section Sources, elle "
+            f"est générée séparément. N'ajoute rien qui n'y figure pas ; si un "
+            f"point reste sans réponse, dis-le."
+            f"\n\nQuestion : {etat['question']}\n\n{sources}")
+
+        # La bibliographie n'est PAS écrite par le modèle : fusionner dix
+        # rapports aux citations 【1】…【6】 remises à zéro à chaque appel lui
+        # faisait reconstruire une liste globale qu'il ne pouvait pas connaître
+        # — et il comblait par des noms de domaine plausibles mais jamais
+        # consultés. Construite ici, elle ne peut citer que ce qui a
+        # RÉELLEMENT été trouvé : chaque `trouvaille` porte ses domaines,
+        # extraits UNE fois, à la source.
+        domaines = list(dict.fromkeys(
+            d for t in trouvailles for d in t.get("domaines", [])))
+        if domaines:
+            rapport = rapport.rstrip() + "\n\nSources consultées : " + ", ".join(domaines)
         return {"rapport": rapport}
 
     g = StateGraph(Etat)

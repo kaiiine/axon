@@ -21,14 +21,14 @@ from typing import Any, Callable
 
 from langchain_core.messages import SystemMessage
 
-from src.orchestrator.context import (
+from src.orchestrator.modele.context import (
     _SUMMARY_MARKER,
     _cap_tool_messages,
     _compress_context,
     _drop_smartest,
     _estimate_tokens,
 )
-from src.orchestrator.resilience import _log_failure
+from src.orchestrator.modele.resilience import _log_failure
 
 RATE_LIMIT_MARKERS = (
     "429",

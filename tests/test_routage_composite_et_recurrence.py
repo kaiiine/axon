@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.tool_retriever import (
+from src.orchestrator.routage.tool_retriever import (
     TOOL_GROUPS, ToolRetriever, _clauses, _coding_intent, _money_intent,
     _recurrence_intent,
 )
@@ -26,7 +26,7 @@ from src.orchestrator.tool_retriever import (
 
 @pytest.fixture(scope="module")
 def retriever():
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
     return ToolRetriever(build_all_tools())
 
 
@@ -142,7 +142,7 @@ def test_la_porte_de_recurrence_ne_depend_pas_de_l_embedder():
     Ollama. C'est ce qui en fait un filet et non un second classement."""
     import inspect
 
-    from src.orchestrator import tool_retriever
+    from src.orchestrator.routage import tool_retriever
 
     source = inspect.getsource(tool_retriever._recurrence_intent)
     for dependance in ("self", "_store", "similarity", "embed"):

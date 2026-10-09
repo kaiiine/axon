@@ -25,12 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from src.orchestrator import catalogue
+from src.orchestrator.routage import catalogue
 
 
 @pytest.fixture(autouse=True)
 def _catalogue_reel():
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
 
     catalogue.indexer(build_all_tools())
     yield

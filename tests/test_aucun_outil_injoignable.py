@@ -67,7 +67,7 @@ def _outils_declares() -> dict[str, Path]:
 @pytest.fixture(scope="module")
 def enregistres() -> set[str]:
     """Les outils de l'ORCHESTRATEUR."""
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
     return {t.name for t in build_all_tools()}
 
 
@@ -100,7 +100,7 @@ def test_tout_outil_declare_est_enregistre(joignables):
 
 def test_tout_outil_enregistre_est_joignable(enregistres):
     """Enregistré ne suffit pas : la sélection se fait par GROUPE."""
-    from src.orchestrator.tool_retriever import TOOL_GROUPS, _PINNED_TOOLS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, _PINNED_TOOLS
 
     routables = {t for g in TOOL_GROUPS.values() for t in g.tools} | set(_PINNED_TOOLS)
     orphelins = sorted(enregistres - routables)
@@ -111,7 +111,7 @@ def test_tout_outil_enregistre_est_joignable(enregistres):
 
 def test_aucun_groupe_ne_cite_un_outil_inexistant(enregistres):
     """La faute symétrique : un groupe qui promet un outil supprimé."""
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     fantomes = sorted(
         {t for g in TOOL_GROUPS.values() for t in g.tools} - enregistres)
@@ -122,8 +122,8 @@ def test_le_deck_local_est_le_chemin_par_defaut():
     """L'invariant produit derrière tout ça : « fais-moi une présentation » doit
     mener au générateur local, qui rend le deck ENTIER en un appel — pas à
     l'API Google Slides, qui en rend une diapositive par appel."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     retriever = ToolRetriever(build_all_tools())
     for requete in ("fais-moi une présentation sur TypeScript",

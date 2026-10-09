@@ -26,7 +26,7 @@ def _resultat(charge: dict) -> ToolMessage:
 
 def test_loutil_pose_un_marqueur_et_ne_travaille_pas():
     """Faire tourner l'agent dans l'outil l'enfermait dans un pas atomique."""
-    from src.orchestrator.registry import run_coding_agent
+    from src.orchestrator.routage.registry import run_coding_agent
 
     charge = json.loads(run_coding_agent.invoke(
         {"task": "corrige le bug de parsing dans src/main.py"}))
@@ -35,7 +35,7 @@ def test_loutil_pose_un_marqueur_et_ne_travaille_pas():
 
 
 def test_une_tache_vide_est_refusee_sans_marqueur():
-    from src.orchestrator.registry import run_coding_agent
+    from src.orchestrator.routage.registry import run_coding_agent
 
     assert json.loads(run_coding_agent.invoke({"task": "court"}))["status"] == "error"
 
@@ -50,7 +50,7 @@ def test_un_autre_resultat_nest_pas_confondu():
 
 
 def test_le_routeur_donne_la_main_au_noeud():
-    from src.orchestrator.clarification import apres_les_outils
+    from src.orchestrator.noeuds.clarification import apres_les_outils
 
     etat = {"messages": [_resultat({"status": MARQUEUR, "tache": "range"})]}
     assert apres_les_outils(etat) == "coder"

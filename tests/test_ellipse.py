@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.ellipse import _MOTS_MAX, est_une_ellipse, porte_un_signal
+from src.orchestrator.routage.ellipse import _MOTS_MAX, est_une_ellipse, porte_un_signal
 from tests.corpus_ellipses import (
     AUTONOMES_REGLAGE, AUTONOMES_TENUES, ELLIPSES_REGLAGE, ELLIPSES_TENUES,
 )
@@ -109,8 +109,8 @@ def test_le_vocabulaire_vient_des_groupes():
     """Une liste de marqueurs curée à la main est ce qui a produit les vingt
     points d'écart sur les skills. Celle-ci est celle des groupes, déjà mesurée,
     et elle bouge avec eux."""
-    from src.orchestrator.ellipse import _vocabulaire
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.ellipse import _vocabulaire
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     declares = set()
     for spec in TOOL_GROUPS.values():

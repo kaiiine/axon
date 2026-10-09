@@ -127,7 +127,10 @@ def test_le_graphe_branche_les_tools_mcp_a_cote_des_natifs():
     ToolNode ET sélectionnables, sans passer par l'index des tools natifs."""
     import pathlib
 
-    src = pathlib.Path("src/orchestrator/graph.py").read_text(encoding="utf-8")
+    # Le nœud `chatbot` a quitté `graph.py` pour `noeuds/chat.py` — comme les
+    # neuf autres nœuds, qui vivaient déjà chacun dans leur fichier. La garantie
+    # gardée ici n'a pas bougé, seulement le fichier qui la porte.
+    src = pathlib.Path("src/orchestrator/noeuds/chat.py").read_text(encoding="utf-8")
     assert "from src.mcp_client.runtime import mcp_runtime" in src
     assert "tools = tools + _mcp.tools" in src                  # exécutables
     # La forme exacte de l'appel a changé quand `select` a reçu les serveurs
@@ -138,8 +141,8 @@ def test_le_graphe_branche_les_tools_mcp_a_cote_des_natifs():
     assert src.index("retriever = ToolRetriever(tools)") < src.index("tools = tools + _mcp.tools")
 
     # La rédaction ne doit pas perdre l'artefact multimodal en reconstruisant le
-    # message. Elle vit avec l'exécution des tools, dans `tool_node.py`.
-    noeud = pathlib.Path("src/orchestrator/tool_node.py").read_text(encoding="utf-8")
+    # message. Elle vit avec l'exécution des tools, dans `noeuds/outils.py`.
+    noeud = pathlib.Path("src/orchestrator/noeuds/outils.py").read_text(encoding="utf-8")
     assert 'artifact=getattr(msg, "artifact", None)' in noeud
 
 

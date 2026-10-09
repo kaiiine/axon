@@ -68,6 +68,47 @@ def _encodeur():
         return None
 
 
+#: Coût FORFAITAIRE d'une image dans le compte de tokens — pas sa taille en
+#: base64. Ordre de grandeur des API vision réelles (GPT-4V, Claude, Gemini
+#: comptent chacune quelques centaines à ~1500 tokens par image selon la
+#: résolution) ; ça n'a pas besoin d'être exact, seulement du bon ORDRE, pour
+#: que le budget se comporte comme le fait réellement le fournisseur.
+_TOKENS_PAR_IMAGE = 1_500
+
+
+def _texte_du_contenu(content) -> tuple[str, int]:
+    """(texte à tokenizer, coût forfaitaire des images) d'un contenu de message.
+
+    Un contenu multimodal est une LISTE de blocs (`{"type": "text", ...}`,
+    `{"type": "image_url", "image_url": {"url": "data:...;base64,<blob>"}}`),
+    pas une chaîne. `str(content)` sur cette liste stringifiait le blob
+    base64 EN ENTIER, et le tokenizer le traitait comme du texte à découper.
+
+    Vécu : une seule capture d'écran de 800 Ko comptait 728 000 tokens — près
+    de dix fois le budget utilisable d'un backend par défaut (128 000 × 0,6).
+    `_should_compress` restait vrai en permanence, et l'image ne quittant
+    jamais la fenêtre « récente » (rien ne la plafonne, contrairement aux
+    `ToolMessage` via `_cap_tool_messages`), la compression ne redescendait
+    jamais sous le seuil — d'où le « compiling… » qui ne semblait plus finir.
+    """
+    if isinstance(content, str):
+        return content, 0
+    if not isinstance(content, list):
+        return str(content), 0
+    textes: list[str] = []
+    images = 0
+    for bloc in content:
+        if not isinstance(bloc, dict):
+            textes.append(str(bloc))
+        elif bloc.get("type") == "image_url" or "image_url" in bloc:
+            images += 1
+        elif bloc.get("type") == "text":
+            textes.append(str(bloc.get("text", "")))
+        else:
+            textes.append(str({k: v for k, v in bloc.items() if k != "image_url"}))
+    return "\n".join(textes), images * _TOKENS_PAR_IMAGE
+
+
 def _estimate_tokens(messages: List) -> int:
     """Taille d'une conversation en tokens.
 
@@ -82,14 +123,14 @@ def _estimate_tokens(messages: List) -> int:
     enc = _encodeur()
     total = 0
     for m in messages:
-        content = m.content if isinstance(m.content, str) else str(m.content)
-        morceaux = [content] + [str(tc) for tc in (getattr(m, "tool_calls", None) or [])]
-        for texte in morceaux:
+        texte, cout_images = _texte_du_contenu(m.content)
+        morceaux = [texte] + [str(tc) for tc in (getattr(m, "tool_calls", None) or [])]
+        for bloc in morceaux:
             if enc is not None:
-                total += len(enc.encode(texte, disallowed_special=()))
+                total += len(enc.encode(bloc, disallowed_special=()))
             else:
-                total += max(1, len(texte) // _CHARS_PAR_TOKEN_DEFAUT)
-        total += _TOKENS_PAR_MESSAGE
+                total += max(1, len(bloc) // _CHARS_PAR_TOKEN_DEFAUT)
+        total += cout_images + _TOKENS_PAR_MESSAGE
     return total
 
 def _backend_policy(backend: str) -> dict:

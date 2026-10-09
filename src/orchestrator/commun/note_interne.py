@@ -26,6 +26,14 @@ def note(texte: str) -> HumanMessage:
     return HumanMessage(content=texte, additional_kwargs={_MARQUE: True})
 
 
+#: Le nom porte la règle apprise n° 4 (`CHANTIERS.md`) : une décision prise par
+#: l'utilisateur revient au modèle comme une ENTRÉE, pas comme son propre tour.
+#: Il était défini à l'identique dans `confirmation.py`, `envoi.py`, `plan.py` et
+#: `revision.py` — quatre copies d'un passe-plat de quatre lignes. Une seule ici,
+#: le nom (qui dit la doctrine) est conservé.
+note_pour_le_modele = note
+
+
 def est_interne(message: Any) -> bool:
     extra = getattr(message, "additional_kwargs", None)
     return bool(isinstance(extra, dict) and extra.get(_MARQUE))

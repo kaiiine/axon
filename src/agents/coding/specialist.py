@@ -825,7 +825,7 @@ def preparer(task: str):
         return tache_vue["texte"]
 
     def _selectionner(messages: list, tache: str) -> list:
-        from src.orchestrator.graph import _restreindre_les_skills
+        from src.orchestrator.noeuds.chat import _restreindre_les_skills
 
         requete = retrieval_query(messages, tache or tache_vue["texte"])
         return _restreindre_les_skills(retriever.get(requete), requete, "coding")

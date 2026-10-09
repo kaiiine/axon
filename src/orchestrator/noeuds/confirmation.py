@@ -14,7 +14,7 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from src.agents.shell.autorisation import accorder
-from src.orchestrator.hitl import (
+from src.orchestrator.commun.hitl import (
     AUTORISATION,
     Demande,
     Question,
@@ -28,10 +28,7 @@ OUI, NON = "Oui, exécuter", "Non, annuler"
 #: Une décision prise dans un questionnaire est une entrée de l'utilisateur :
 #: elle arrive au modèle comme telle, jamais comme un `AIMessage` — que le TUI
 #: afficherait et que le modèle relirait comme son propre tour.
-def note_pour_le_modele(texte: str) -> HumanMessage:
-    from src.orchestrator.note_interne import note
-
-    return note(texte)
+from src.orchestrator.commun.note_interne import note_pour_le_modele  # noqa: E402,F401
 
 
 # ── Lecture des messages ─────────────────────────────────────────────────────

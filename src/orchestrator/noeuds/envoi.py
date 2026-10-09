@@ -12,17 +12,14 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from src.orchestrator.hitl import ENVOI, Demande, Question, demander
+from src.orchestrator.commun.hitl import ENVOI, Demande, Question, demander
 
 ENVOYER, ANNULER, MODIFIER = "Envoyer", "Annuler", "Modifier"
 
 #: Une décision prise dans un questionnaire est une entrée de l'utilisateur :
 #: elle arrive au modèle comme telle, jamais comme un `AIMessage` — que le TUI
 #: afficherait et que le modèle relirait comme son propre tour.
-def note_pour_le_modele(texte: str) -> HumanMessage:
-    from src.orchestrator.note_interne import note
-
-    return note(texte)
+from src.orchestrator.commun.note_interne import note_pour_le_modele  # noqa: E402,F401
 
 
 #: L'outil qui prépare le brouillon. Nommé ici pour qu'un renommage côté Gmail

@@ -22,7 +22,7 @@ ces fichiers » produit un texte plausible au lieu d'une action.
 """
 import pytest
 
-from src.orchestrator.invocation import MAX_TRANSIENT_RETRIES, classify
+from src.orchestrator.modele.invocation import MAX_TRANSIENT_RETRIES, classify
 
 
 @pytest.mark.parametrize("message", [
@@ -80,7 +80,7 @@ def test_les_reessais_epuises_renoncent_franchement():
     """
     import inspect
 
-    from src.orchestrator import invocation
+    from src.orchestrator.modele import invocation
 
     source = inspect.getsource(invocation.invoke_with_recovery)
     # On borne au bloc `transient` lui-même — jusqu'au `continue` qui le clôt —

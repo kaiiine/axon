@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.registry import build_all_tools
-from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever, _TOP_GROUPS
+from src.orchestrator.routage.registry import build_all_tools
+from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever, _TOP_GROUPS
 
 
 # ── jeu de référence : requête → outil attendu dans la sélection ────────────────
@@ -390,7 +390,7 @@ _MIN_PER_GROUP = {
 def retriever(tmp_path_factory):
     """Index ISOLÉ : un test qui écrit dans ~/.axon/tool_store écraserait le cache
     de l'utilisateur et ferait dépendre son démarrage du dernier test lancé."""
-    from src.orchestrator import tool_retriever as module
+    from src.orchestrator.routage import tool_retriever as module
 
     store = tmp_path_factory.mktemp("tool_store") / "store"
     module._CACHE_DIR, module._CACHE_HASH = store, store / "fingerprint.txt"
@@ -542,7 +542,7 @@ def test_un_groupe_nomme_litteralement_est_toujours_elu(retriever, query, groupe
 def test_le_lexical_n_ecrase_pas_le_semantique(retriever):
     """Le lexical AJOUTE, il ne remplace pas : une demande sans terme propre doit
     continuer de passer par la similarité."""
-    from src.orchestrator.tool_retriever import _keyword_groups
+    from src.orchestrator.routage.tool_retriever import _keyword_groups
 
     query = "quels sont mes rendez vous de demain"
     assert not _keyword_groups(query), "aucun terme propre attendu ici"
@@ -553,7 +553,7 @@ def test_les_mots_cles_matchent_des_mots_entiers(retriever):
     """« paris » ne doit pas être trouvé dans « comparaison », ni « ip » dans
     « équipe » : une sous-chaîne élirait un groupe sans rapport, et le lexical
     deviendrait une source de bruit au lieu d'une garantie."""
-    from src.orchestrator.tool_retriever import _keyword_groups
+    from src.orchestrator.routage.tool_retriever import _keyword_groups
 
     assert "quant" not in _keyword_groups("fais une comparaison des options")
     assert "network" not in _keyword_groups("la composition de l'équipe")
@@ -565,7 +565,7 @@ def test_aucun_mot_cle_n_est_revendique_par_deux_groupes():
     garantie deviendrait du bruit."""
     from collections import Counter
 
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     compte = Counter(k for spec in TOOL_GROUPS.values() for k in spec.keywords)
     doublons = {k: n for k, n in compte.items() if n > 1}

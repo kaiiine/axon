@@ -19,7 +19,7 @@ import re
 
 import pytest
 
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.routage.registry import build_all_tools
 
 #: Une ligne « nom: description » indentée, la forme des blocs Args des docstrings.
 _CITE = re.compile(r"^\s{4,8}([a-z][a-z0-9_]*)\s*:", re.M)

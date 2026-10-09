@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from src.agents.coding.pending import FileChange, pending_changes, dev_plan, recent_tools, _ANALYSIS_TOOLS
 
@@ -810,7 +810,38 @@ def _base_content(path: str) -> tuple[str, str] | None:
     return contenu, contenu
 
 
-@tool("edit_file")
+class ArgsEditFile(BaseModel):
+    """Même remède que `ArgsShell` pour `command`/`cmd` — un modèle a envoyé
+    `old_fragment`/`new_fragment` au lieu de `old_string`/`new_string` : une
+    erreur de validation Pydantic *correcte et lisible* (« old_string : Field
+    required »), mais qu'il a préféré expliquer à sa façon plutôt que la
+    relire — « les valeurs contenaient des caractères de mise en forme » n'a
+    aucun rapport avec l'erreur réelle. Retenter n'aurait rien réparé : c'était
+    le MÊME nom à chaque appel, pas un hasard.
+
+    Le schéma annoncé garde `old_string`/`new_string` — c'est eux qu'on
+    enseigne ; l'alias ne fait que rattraper.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str = Field(description="Chemin absolu du fichier existant.")
+    old_string: str = Field(
+        validation_alias=AliasChoices("old_string", "old_fragment"),
+        serialization_alias="old_string",
+        description="Fragment exact à remplacer, copié du fichier.",
+    )
+    new_string: str = Field(
+        validation_alias=AliasChoices("new_string", "new_fragment"),
+        serialization_alias="new_string",
+        description="Fragment de remplacement (\"\" supprime le fragment).",
+    )
+    description: str = Field(default="", description="Description en une ligne du changement.")
+    replace_all: bool = Field(
+        default=False, description="Remplacer toutes les occurrences plutôt qu'exiger l'unicité.")
+
+
+@tool("edit_file", args_schema=ArgsEditFile)
 def edit_file(path: str, old_string: str, new_string: str,
               description: str = "", replace_all: bool = False) -> Dict[str, Any]:
     """

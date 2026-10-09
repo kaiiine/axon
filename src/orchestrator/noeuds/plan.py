@@ -10,16 +10,16 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from src.orchestrator.hitl import PLAN, Demande, Question, demander
+from src.orchestrator.commun.hitl import PLAN, Demande, Question, demander
 
 OUVERT, FERME = "<axon:plan>", "</axon:plan>"
 EXECUTER, PRECISER, ABANDONNER = "Exécuter le plan", "Préciser", "Abandonner"
 
 
-def note_pour_le_modele(texte: str) -> HumanMessage:
-    from src.orchestrator.note_interne import note
-
-    return note(texte)
+#: Une décision prise dans un questionnaire est une entrée de l'utilisateur :
+#: elle arrive au modèle comme telle, jamais comme un `AIMessage` — que le TUI
+#: afficherait et que le modèle relirait comme son propre tour.
+from src.orchestrator.commun.note_interne import note_pour_le_modele  # noqa: E402,F401
 
 
 def _plan_du_message(message: Any) -> str | None:

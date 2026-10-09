@@ -198,7 +198,7 @@ def get_recent_messages(thread_id: str, n: int | None = None) -> list[dict]:
     if n is not None:
         msgs = msgs[-n:] if len(msgs) > n else msgs
 
-    from src.orchestrator.note_interne import est_interne
+    from src.orchestrator.commun.note_interne import est_interne
 
     result = []
     for m in msgs:

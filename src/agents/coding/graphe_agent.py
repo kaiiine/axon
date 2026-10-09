@@ -31,8 +31,8 @@ from langgraph.types import Send
 from langgraph.graph.message import REMOVE_ALL_MESSAGES, add_messages
 from typing_extensions import TypedDict
 
-from src.orchestrator import hitl
-from src.orchestrator.plan import ABANDONNER, EXECUTER, PRECISER
+from src.orchestrator.commun import hitl
+from src.orchestrator.noeuds.plan import ABANDONNER, EXECUTER, PRECISER
 
 #: Au-delà, on rend la main plutôt que de tourner. Repris de la boucle d'origine.
 TOURS_MAX = 80
@@ -282,7 +282,7 @@ def construire(
         Même implémentation que le nœud de l'orchestrateur : une seule revue
         existe, elle sert les deux graphes.
         """
-        from src.orchestrator.revision import reviser
+        from src.orchestrator.noeuds.revision import reviser
 
         return reviser(etat)
 
@@ -421,7 +421,7 @@ def construire(
 
         if etat.get("en_attente"):
             return "confirmer"
-        from src.orchestrator.revision import revision_attendue
+        from src.orchestrator.noeuds.revision import revision_attendue
 
         if revision_attendue(etat):
             return "reviser_les_fichiers"

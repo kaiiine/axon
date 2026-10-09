@@ -93,7 +93,7 @@ def _vocabulaire() -> frozenset[str]:
     et la distinctivité ne l'élimine pas : ces mots-là n'apparaissent eux-mêmes
     que dans un ou deux documents. Élargir la source élargit le bruit avec elle.
     """
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     termes: set[str] = set()
     for spec in TOOL_GROUPS.values():
@@ -103,7 +103,7 @@ def _vocabulaire() -> frozenset[str]:
 
 def porte_un_signal(requete: str) -> bool:
     """La requête nomme-t-elle un domaine, ou pointe-t-elle quelque chose ?"""
-    from src.orchestrator.tool_retriever import _WORD
+    from src.orchestrator.routage.tool_retriever import _WORD
 
     if any(ancre in requete for ancre in _ANCRES):
         return True
@@ -112,7 +112,7 @@ def porte_un_signal(requete: str) -> bool:
 
 def est_une_ellipse(requete: str) -> bool:
     """Ce tour a-t-il besoin des précédents pour vouloir dire quelque chose ?"""
-    from src.orchestrator.tool_retriever import _WORD
+    from src.orchestrator.routage.tool_retriever import _WORD
 
     if not requete or not requete.strip():
         return False

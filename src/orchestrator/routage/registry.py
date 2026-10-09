@@ -55,7 +55,8 @@ from src.agents.jira.tools import (
     jira_list_projects, jira_add_comment, jira_transition_issue, jira_get_workload,
     jira_create_issue, jira_create_issues_bulk, jira_assign_issue, jira_update_issue,
     jira_get_issue_comments, jira_search_users, jira_move_issue,
-    jira_delete_issue, jira_link_to_epic,
+    jira_delete_issue, jira_link_to_epic, jira_list_issue_types,
+    jira_update_issues_bulk,
 )
 
 from src.agents.cron.tools import (
@@ -260,6 +261,8 @@ def build_all_tools() -> List[BaseTool]:
         jira_move_issue,
         jira_delete_issue,
         jira_link_to_epic,
+        jira_list_issue_types,
+        jira_update_issues_bulk,
         # === CODING / PROJETS ===
         run_coding_agent,
         # === SKILLS PROJET ===
