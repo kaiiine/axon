@@ -26,6 +26,8 @@ SOCKET = RUNTIME / "axon" / "overlay.sock"
 class PontOverlay:
     def __init__(self, chemin: Path = SOCKET) -> None:
         self.chemin = chemin
+        #: False tant que `activer()` n'a pas été appelé : voir sa docstring.
+        self.actif = False
         self.sock: socket.socket | None = None
         self.verrou = threading.Lock()
         self.attentes: dict[str, list] = {}       # id -> [Event, décision]
@@ -100,8 +102,24 @@ class PontOverlay:
     def connecte(self) -> bool:
         return self.sock is not None
 
+    def activer(self) -> bool:
+        """Autorise ce processus à se connecter à l'île, puis tente la connexion.
+
+        L'île n'accepte qu'UN client : chaque nouvelle connexion ferme la
+        précédente. Seule la vraie session CLI (`app.run_cli`) doit donc se
+        connecter — pas un test, un script ou un autre processus qui importe
+        simplement ce module. Avant cette garde, la connexion partait à
+        l'import : n'importe lequel de ces processus éjectait le CLI, et une
+        réponse donnée dans l'île à ce moment-là se perdait (le CLI retombait
+        sur sa question au terminal, l'île semblait bloquée)."""
+        self.actif = True
+        return self.connecter()
+
     def connecter(self) -> bool:
-        """Tente une connexion. Renvoie False sans bruit si l'overlay n'est pas lancé."""
+        """Tente une connexion. Renvoie False sans bruit si l'overlay n'est pas
+        lancé — ou si ce processus n'a pas été activé (`activer`)."""
+        if not self.actif:
+            return False
         with self.verrou:
             if self.sock is not None:
                 return True
@@ -274,8 +292,7 @@ class PontOverlay:
         self.envoyer(type="annulation", id=id_)
 
 
-#: Singleton partagé par tout le CLI. La connexion est tentée une fois ici ;
-#: si l'overlay n'est pas lancé, `connecter()` échoue vite et sans bruit, et
-#: chaque appel d'`envoyer()` retentera — Axon marche exactement comme avant.
+#: Singleton partagé par tout le CLI. Inactif tant que `app.run_cli` ne l'a
+#: pas activé ; ensuite, si l'overlay n'est pas lancé, `connecter()` échoue
+#: vite et sans bruit, et chaque `envoyer()` retente — Axon marche comme avant.
 pont = PontOverlay()
-pont.connecter()

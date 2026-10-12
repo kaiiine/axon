@@ -36,6 +36,9 @@ def _demarrer_cli(monkeypatch, tmp_path):
 
     envois: list[dict] = []
     monkeypatch.setattr(pont, "envoyer", lambda **m: envois.append(m) or True)
+    # `run_cli` active la connexion à l'île : jamais vers une île réellement
+    # lancée sur la machine, qui éjecterait la vraie session.
+    monkeypatch.setattr(pont, "activer", lambda: False)
     monkeypatch.setattr(app_module.console, "clear", lambda: None)
     monkeypatch.setattr(app_module, "load_last_thread", lambda: None)
     monkeypatch.setattr(app_module, "save_last_thread", lambda _t: None)

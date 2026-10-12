@@ -351,8 +351,36 @@ function handle(m:Record<string,unknown>){
 }
 function file(m:Record<string,unknown>){const diff=m.type==='diff'||m.diff!==undefined;model.update(s=>({...s,file:{path:txt(m.chemin||m.fichier||m.detail)||'fichier',content:txt(diff?(m.diff??m.contenu):m.contenu),diff,start:typeof m.ligne==='number'&&Number.isInteger(m.ligne)&&m.ligne>0?m.ligne:1}}));}
 export function submit(){const s=get(model),text=s.draft.trim();if(!text||(!s.connected&&!s.demo)||s.busy)return;if(s.requests.length){answer(text);return;}if(!s.demo&&!post({type:'commande',texte:text})){notice('Le lien avec Axon est indisponible. Ton brouillon est conservé.');return;}setDraft('');log('toi',text);model.update(s=>({...s,state:'thinking'}));if(s.demo)log('axon','Ceci est un aperçu. Aucune commande n’a été exécutée.');}
-export function answer(text:string){const s=get(model),p=s.requests[0];if(!p||s.busy||(!s.connected&&!s.demo))return;const q=p.questions[p.answers.length];if(!q||(q.choix.length&&!p.freeform&&!q.choix.includes(text)))return;const answers=[...p.answers,text];if(answers.length===p.questions.length&&!s.demo){const ok=post(p.legacy?{type:'decision',id:p.id,accord:text==='Autoriser'}:{type:'reponse_demande',id:p.id,reponses:answers});if(!ok){notice('Réponse non envoyée. Tu peux réessayer.');return;}}
-  log('toi',text);model.update(s=>({...s,draft:'',busy:true,requests:answers.length===p.questions.length?s.requests.slice(1):[{...p,answers,freeform:false},...s.requests.slice(1)],state:answers.length===p.questions.length?'working':'waiting'}));clearTimeout(unlock);unlock=setTimeout(()=>model.update(s=>({...s,busy:false})),300);
+//: La réponse effectivement envoyée pour `texte`, ou null si elle n'est pas
+//: acceptable. Un texte tapé dans le chat face à des boutons était ignoré EN
+//: SILENCE dès qu'il différait d'un libellé (« oui », « autoriser » en
+//: minuscules…) : rien ne partait, le CLI attendait toujours, l'île semblait
+//: bloquée.
+function reponseAcceptee(q:{choix:string[];libre?:boolean},texte:string,saisieLibre:boolean):string|null{
+  if(!q.choix.length||saisieLibre)return texte;
+  const choix=q.choix.find(c=>c===texte)??q.choix.find(c=>c.toLowerCase()===texte.toLowerCase());
+  if(choix)return choix;
+  if(q.libre!==false)return texte;   // réponse libre, comme « Autre (préciser) »
+  return null;
+}
+export function answer(text:string){
+  const s=get(model),p=s.requests[0];
+  if(!p||s.busy)return;
+  if(!s.connected&&!s.demo){notice('Axon n’est pas connecté : ta réponse n’a pas été envoyée.');return;}
+  const q=p.questions[p.answers.length];
+  if(!q)return;
+  const reponse=reponseAcceptee(q,text,!!p.freeform);
+  if(reponse===null){notice(`Choisis une des réponses proposées : ${q.choix.join(', ')}.`);return;}
+  const answers=[...p.answers,reponse];
+  const derniere=answers.length===p.questions.length;
+  if(derniere&&!s.demo){
+    const ok=post(p.legacy?{type:'decision',id:p.id,accord:reponse==='Autoriser'}:{type:'reponse_demande',id:p.id,reponses:answers});
+    if(!ok){notice('Réponse non envoyée. Tu peux réessayer.');return;}
+  }
+  log('toi',reponse);
+  model.update(s=>({...s,draft:'',busy:true,requests:derniere?s.requests.slice(1):[{...p,answers,freeform:false},...s.requests.slice(1)],state:derniere?'working':'waiting'}));
+  clearTimeout(unlock);
+  unlock=setTimeout(()=>model.update(s=>({...s,busy:false})),300);
 }
 // « Autre » n'arrive jamais dans `choix` (l'agent a pour consigne de ne pas
 // l'ajouter, voir src/agents/clarify/tools.py) : c'est à l'interface de

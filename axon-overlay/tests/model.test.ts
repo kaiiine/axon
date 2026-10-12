@@ -12,7 +12,36 @@ describe('contrat Axon et état stable',()=>{
  it('bloque le double clic entre deux demandes',()=>{receive({type:'connexion',connecte:true});for(const id of ['A','B'])receive({type:'demande',id,questions:[{texte:'?',choix:['oui']}]});answer('oui');answer('oui');expect(post.mock.calls.filter(c=>c[0].type==='reponse_demande')).toHaveLength(1);expect(get(model).requests[0].id).toBe('B');});
  it('déconnexion et annulation invalident les réponses',()=>{receive({type:'connexion',connecte:true});receive({type:'demande',id:'A',questions:[{texte:'?',choix:[]}]});receive({type:'annulation',id:'A'});answer('oui');receive({type:'demande',id:'B',questions:[{texte:'?',choix:[]}]});receive({type:'connexion',connecte:false});answer('oui');expect(post.mock.calls.filter(c=>c[0].type==='reponse_demande')).toHaveLength(0);expect(get(model).requests).toHaveLength(0);});
  it('ignore les messages mal formés et conserve le texte comme donnée',()=>{receive(null);receive('x');receive({type:'demande',id:{},questions:[]});receive({type:'message',texte:'<img onerror="attack()">'});expect(get(model).requests).toHaveLength(0);expect(get(model).messages[0].text).toContain('<img');});
- it('« Autre » lève la validation stricte des choix pour une question fermée',()=>{receive({type:'connexion',connecte:true});receive({type:'demande',id:0,questions:[{texte:'?',choix:['oui','non']}]});answer('texte libre');expect(get(model).requests).toHaveLength(1);expect(get(model).requests[0].freeform).toBeUndefined();chooseFreeform();expect(get(model).requests[0].freeform).toBe(true);answer('texte libre');expect(post).toHaveBeenLastCalledWith({type:'reponse_demande',id:0,reponses:['texte libre']});});
+ it('une réponse tapée face à des boutons part quand la question accepte « Autre »',()=>{
+  // Avant : ignorée en silence tant qu'on n'avait pas cliqué « Autre » — le CLI attendait, l'île semblait bloquée.
+  receive({type:'connexion',connecte:true});receive({type:'demande',id:0,questions:[{texte:'?',choix:['oui','non']}]});
+  answer('texte libre');
+  expect(post).toHaveBeenLastCalledWith({type:'reponse_demande',id:0,reponses:['texte libre']});
+  expect(get(model).requests).toHaveLength(0);
+ });
+ it('une réponse tapée retrouve le bouton correspondant, quelle que soit la casse',()=>{
+  receive({type:'connexion',connecte:true});receive({type:'demande',id:1,questions:[{texte:'Lancer ?',choix:['Autoriser','Refuser'],affirmatif:'Autoriser'}]});
+  answer('autoriser');
+  expect(post).toHaveBeenLastCalledWith({type:'reponse_demande',id:1,reponses:['Autoriser']});
+ });
+ it('une question fermée refuse une réponse hors liste, mais le dit au lieu de se taire',()=>{
+  receive({type:'connexion',connecte:true});receive({type:'demande',id:2,questions:[{texte:'Backend ?',choix:['gemini','mistral'],libre:false}]});
+  post.mockClear();
+  answer('ollama');
+  expect(post).not.toHaveBeenCalled();
+  expect(get(model).requests).toHaveLength(1);
+  expect(get(model).notice).toContain('gemini, mistral');
+  chooseFreeform();answer('ollama'); // « Autre » explicite reste possible côté protocole
+  expect(post).toHaveBeenLastCalledWith({type:'reponse_demande',id:2,reponses:['ollama']});
+ });
+ it('répondre hors connexion prévient au lieu de ne rien faire',()=>{
+  receive({type:'connexion',connecte:true});receive({type:'demande',id:3,questions:[{texte:'?',choix:[]}]});
+  model.update(s=>({...s,connected:false}));
+  post.mockClear();
+  answer('ok');
+  expect(post).not.toHaveBeenCalled();
+  expect(get(model).notice).toContain('pas été envoyée');
+ });
  it('repart sans freeform sur la question suivante',()=>{vi.useFakeTimers();receive({type:'connexion',connecte:true});receive({type:'demande',id:0,questions:[{texte:'A ?',choix:['oui']},{texte:'B ?',choix:['oui']}]});chooseFreeform();answer('libre');expect(get(model).requests[0].freeform).toBe(false);vi.useRealTimers();});
  it('ouvrir une intégration connectée avec raccourci déclenche le raccourci et passe en chargement',()=>{receive({type:'connexion',connecte:true});post.mockClear();openIntegration('gmail');expect(post).toHaveBeenCalledWith(expect.objectContaining({type:'raccourci',action:'gmail_non_lus'}));expect(get(model).integrationData['gmail_non_lus'].status).toBe('loading');});
  it("n'envoie pas de raccourci pour une intégration sans action (Slack) ni hors connexion",()=>{receive({type:'connexion',connecte:true});post.mockClear();openIntegration('slack');expect(post.mock.calls.filter(c=>c[0].type==='raccourci')).toHaveLength(0);reset();post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};openIntegration('gmail');expect(post.mock.calls.filter(c=>c[0].type==='raccourci')).toHaveLength(0);});

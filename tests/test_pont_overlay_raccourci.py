@@ -126,3 +126,25 @@ def test_demander_flux_et_planifier_rappels_sont_transmis():
     pont._traiter({"type": "planifier_rappels", "id": "r1", "suivi_id": "suivi_a", "echeance_id": "ech_1"})
 
     assert appels == [("flux", "f1", "resume_suivi", "suivi_a"), ("rappels", "r1", "suivi_a", "ech_1")]
+
+
+def test_sans_activation_aucune_connexion_meme_si_l_ile_ecoute(tmp_path):
+    """L'île n'accepte qu'un client : un test ou un script qui importe ce
+    module ne doit jamais éjecter la vraie session CLI."""
+    import socket
+
+    chemin = tmp_path / "overlay.sock"
+    serveur = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    serveur.bind(str(chemin)); serveur.listen(1)
+    try:
+        pont = PontOverlay(chemin)
+        assert pont.connecter() is False
+        assert pont.envoyer(type="etat", etat="idle") is False
+        assert pont.activer() is True and pont.connecte
+    finally:
+        serveur.close()
+
+
+def test_le_singleton_du_module_n_est_pas_connecte_a_l_import():
+    from src.ui.pont_overlay import pont
+    assert pont.actif is False
