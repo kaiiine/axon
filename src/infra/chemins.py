@@ -87,6 +87,12 @@ def crons() -> Path:
     return etat("crons.json")
 
 
+def dernier_recap_etudes() -> Path:
+    """Date (ISO) du dernier récapitulatif d'études envoyé par le daemon cron —
+    pour n'en envoyer qu'un par jour, même s'il redémarre."""
+    return etat("dernier_recap_etudes")
+
+
 def etudes() -> Path:
     """Échéances (devoirs/partiels/rendus), avec leur fiche de suivi imbriquée."""
     return etat("etudes.json")

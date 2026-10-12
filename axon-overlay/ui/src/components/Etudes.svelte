@@ -1,5 +1,5 @@
 <script lang="ts">
- import {model,demanderAxon,demanderPicker,detacherPiece,demanderRaccourci,demanderDetail,creerSuivi,creerEcheance,archiverSuivi} from '../model';
+ import {model,demanderAxon,demanderPicker,detacherPiece,demanderRaccourci,demanderDetail,creerSuivi,creerEcheance,archiverSuivi,lierRessource,supprimerSuivi,notice,ouvrirSuivi} from '../model';
  import Icon from './Icon.svelte';
  import AttachmentChip from './AttachmentChip.svelte';
  import CreerSuivi from './CreerSuivi.svelte';
@@ -50,20 +50,50 @@
  //: directement ses ressources déjà associées — pas besoin de re-/attach.
  //: Même mécanisme que `demanderAxon` : navigue au chat, où la clarification
  //: QCM/ouvert/mixte (si /exo) et le résultat final apparaissent normalement.
- function detailSuivi(id:string){demanderDetail(ACTION_SUIVIS,'etudes_detail_suivi',id);}
  function actionBoutonSuivi(id:string,type:'fiche'|'exo',labelDepart:string,icone:string,statut?:string,fichier?:string){
   if(statut==='en_cours')return {label:'Génération en cours',icon:icone,disabled:true,onClick:()=>{}};
   if(statut==='terminee'&&fichier)return {label:'Ouvrir le résultat',icon:'file',onClick:()=>ouvrirResultat(fichier)};
   if(statut==='echouee')return {label:'Réessayer',icon:'refresh',onClick:()=>lancerGeneration(`/${type} ${id}`)};
   return {label:labelDepart,icon:icone,onClick:()=>lancerGeneration(`/${type} ${id}`)};
  }
- function actionsSuivi(r:{id?:string;generationFicheStatut?:string;generationFicheFichier?:string;generationExoStatut?:string;generationExoFichier?:string}){
+ //: Suppression définitive : un premier clic arme le bouton (il devient
+ //: « Confirmer la suppression » quelques secondes), le second supprime.
+ let suiviAConfirmer:string|null=null;
+ let delaiConfirmation:ReturnType<typeof setTimeout>|undefined;
+ function demanderSuppression(id:string){
+  clearTimeout(delaiConfirmation);
+  if(suiviAConfirmer===id){
+   suiviAConfirmer=null;
+   suivreActionLigne(supprimerSuivi(id));
+   return;
+  }
+  suiviAConfirmer=id;
+  delaiConfirmation=setTimeout(()=>{suiviAConfirmer=null;},4000);
+ }
+ function boutonSuppression(id:string,aConfirmer:string|null){
+  if(aConfirmer===id)return {label:'Confirmer la suppression',icon:'check',danger:true,onClick:()=>demanderSuppression(id)};
+  return {label:'Supprimer le suivi',icon:'trash',onClick:()=>demanderSuppression(id)};
+ }
+ function actionsSuivi(r:{id?:string;generationFicheStatut?:string;generationFicheFichier?:string;generationExoStatut?:string;generationExoFichier?:string},aConfirmer:string|null){
   const id=r.id??'';
   return [
    actionBoutonSuivi(id,'fiche','Créer une fiche','file',r.generationFicheStatut,r.generationFicheFichier),
    actionBoutonSuivi(id,'exo','Générer des exercices','spark',r.generationExoStatut,r.generationExoFichier),
-   {label:'Archiver',icon:'flag',onClick:()=>archiverSuivi(id)},
+   {label:'Ajouter un fichier',icon:'paperclip',onClick:()=>suivreActionLigne(lierRessource(id,'fichier'))},
+   {label:'Ajouter un autre dossier ou dépôt',icon:'folder',onClick:()=>suivreActionLigne(lierRessource(id,'dossier'))},
+   {label:'Archiver',icon:'flag',onClick:()=>suivreActionLigne(archiverSuivi(id))},
+   boutonSuppression(id,aConfirmer),
   ];
+ }
+
+ //: Archiver/lier sont des clics ponctuels sans formulaire où afficher une
+ //: erreur : on suit leur id et un échec s'affiche dans la barre de notice
+ //: de l'île au lieu de passer inaperçu.
+ let actionsLigne=new Set<string>();
+ function suivreActionLigne(id:string|undefined){if(id)actionsLigne.add(id);}
+ $: if($model.actionEtudes&&$model.actionEtudes.statut!=='en_cours'&&actionsLigne.has($model.actionEtudes.id)){
+  actionsLigne.delete($model.actionEtudes.id);
+  if($model.actionEtudes.statut==='erreur')notice($model.actionEtudes.message||'Échec de l’action.');
  }
  //: Pour peupler le sélecteur de suivi d'AjouterEcheance.svelte — une
  //: échéance appartient toujours à un suivi existant (§3, lot 3).
@@ -76,10 +106,14 @@
   <button class="refresh" onclick={actualiserTout} title="Actualiser" aria-label="Actualiser"><Icon name="refresh"/></button>
  </header>
 
- <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
- <div class="drop" class:actif={$model.dragActif} onclick={demanderPicker} title="Travail rapide : un document, sans créer de suivi">
-  <Icon name="paperclip"/>
-  <p>Déposer un document ou cliquer pour parcourir</p>
+ <!-- Un fichier : travail rapide (pièce jointe). Un dossier ou un dépôt :
+      un suivi à son nom, auquel il est lié — glissé ici ou choisi. -->
+ <div class="drop" class:actif={$model.dragActif}>
+  <p>Déposer un fichier ou un dossier</p>
+  <div class="drop-choix">
+   <button onclick={demanderPicker} disabled={!$model.connected}><Icon name="paperclip"/>Fichier</button>
+   <button onclick={()=>suivreActionLigne(lierRessource('','dossier'))} disabled={!$model.connected}><Icon name="folder"/>Dossier ou dépôt</button>
+  </div>
  </div>
  {#if $model.attachments.length}
   <div class="attachments" aria-label="Documents attachés">
@@ -101,8 +135,7 @@
   <div class="section-head"><span>Suivis</span><CreerSuivi disabled={!$model.connected} onCreer={creerSuivi}/></div>
   {#if suivis?.rows?.length}
    {#each suivis.rows as r}
-    <Row title={r.title} meta={r.meta} tag={r.tag} detail={r.detail} detailStatus={r.detailStatus}
-         detailLabel="Détail" onExpand={()=>detailSuivi(r.id??'')} actions={actionsSuivi(r)}/>
+    <Row title={r.title} meta={r.meta} tag={r.tag} onOpen={()=>ouvrirSuivi(r.id??'')} actions={actionsSuivi(r,suiviAConfirmer)}/>
    {/each}
   {:else if suivis?.status==='loading'}
    <Skeleton stats={false}/>
@@ -145,11 +178,13 @@
  .mark{width:32px;height:32px;border-radius:11px;display:grid;place-items:center;color:#dfb86e;background:#ffaf0014;border:1px solid #ffaf0030;flex:none}
  .meta{min-width:0;flex:1}
  .meta strong{display:block;font-size:13px;font-weight:600;letter-spacing:-.1px}
- .drop{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:18px 14px;border:1.5px dashed #ffffff20;border-radius:16px;color:var(--muted);text-align:center;cursor:pointer;transition:background 150ms,border-color 150ms,color 150ms}
- .drop:hover{background:#ffffff05;color:var(--text)}
+ .drop{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px 14px;border:1.5px dashed #ffffff20;border-radius:16px;color:var(--muted);text-align:center;transition:background 150ms,border-color 150ms,color 150ms}
  .drop.actif{background:#ffaf0014;border-color:#ffaf0060;color:#dfb86e}
- .drop :global(.icon){width:18px;height:18px}
  .drop p{font-size:10.5px;max-width:300px}
+ .drop-choix{display:flex;gap:8px}
+ .drop-choix button{display:flex;align-items:center;gap:6px;font-size:10px;padding:7px 12px;border-radius:10px;border:1px solid #ffaf0024;background:#ffaf0009;color:#dfb86e;transition:transform 160ms var(--spring),background 150ms,border-color 150ms}
+ .drop-choix button:hover:not(:disabled){background:#ffaf0014;border-color:#ffaf0040;transform:translateY(-1px)}
+ .drop-choix :global(.icon){width:12px;height:12px}
  .attachments{display:flex;flex-wrap:wrap;gap:6px;flex:none}
  .etudes-actions{display:flex;gap:8px;flex:none}
  .action{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;font-size:10px;padding:9px 10px;border-radius:10px;border:1px solid #ffaf0024;background:#ffaf0009;color:#dfb86e;transition:transform 160ms var(--spring),background 150ms,border-color 150ms}

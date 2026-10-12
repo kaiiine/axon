@@ -188,6 +188,16 @@ def run_cli(graph):
                 }]
                 pont.pieces_jointes(ephemere)
                 return
+            if _Path(chemin).is_dir():
+                # Un dossier n'a pas de texte à joindre : déposé sur l'île, il
+                # devient un suivi à son nom (un dépôt Git → un projet), auquel
+                # il est lié. Seule une erreur passe par la liste des pièces.
+                erreur = _lier_chemin("", chemin)
+                if erreur:
+                    pont.pieces_jointes(_instantane_pieces_jointes() + [{
+                        "nom": nom, "statut": "erreur", "message": erreur, "est_image": False, "taille": "",
+                    }])
+                return
             # Un gros PDF/Office prend une bonne seconde à extraire : sans ce
             # premier envoi, l'île n'a aucun retour entre le dépôt et la fin
             # de l'extraction — on pousse un chip "chargement" devant la
@@ -318,6 +328,74 @@ def run_cli(graph):
         except Exception as e:
             pont.envoyer(type="etudes_action_erreur", id=id_, message=str(e))
 
+    def _gerer_supprimer_suivi(id_: str, suivi_id: str) -> None:
+        # L'île demande une confirmation avant d'envoyer : ici, on supprime.
+        from src.agents.study.tools_suivi import etude_supprimer_suivi
+
+        try:
+            reponse = etude_supprimer_suivi.invoke({"suivi_id": suivi_id})
+            if reponse.startswith("Suivi introuvable"):
+                pont.envoyer(type="etudes_action_erreur", id=id_, message=reponse)
+                return
+            _rafraichir_panneaux_etudes("etudes_suivis", "etudes_echeances", "etudes_fiches_recentes")
+            pont.envoyer(type="etudes_action_resultat", id=id_)
+        except Exception as e:
+            pont.envoyer(type="etudes_action_erreur", id=id_, message=str(e))
+
+    def _gerer_demander_flux(id_: str, genre: str, cible: str) -> None:
+        # Thread à part : un appel LLM en flux dure plusieurs secondes.
+        from src.ui.flux_overlay import diffuser
+
+        threading.Thread(target=diffuser, args=(id_, genre, cible, pont.envoyer), daemon=True).start()
+
+    def _gerer_planifier_rappels(id_: str, suivi_id: str, echeance_id: str) -> None:
+        from src.agents.study.tools_echeance import etude_planifier_rappel_echeance
+
+        try:
+            reponse = etude_planifier_rappel_echeance.invoke({"suivi_id": suivi_id, "echeance_id": echeance_id})
+            if reponse.startswith(("Échéance introuvable", "Aucun rappel programmé")):
+                pont.envoyer(type="etudes_action_erreur", id=id_, message=reponse)
+                return
+            _rafraichir_panneaux_etudes("etudes_echeances")
+            pont.envoyer(type="etudes_action_resultat", id=id_)
+        except Exception as e:
+            pont.envoyer(type="etudes_action_erreur", id=id_, message=str(e))
+
+    def _lier_chemin(suivi_id: str, chemin: str) -> str | None:
+        """Lie `chemin` (voir `lier_chemin_local`) puis rafraîchit la liste
+        des suivis de l'île. Renvoie un message d'erreur, ou None."""
+        from src.agents.study.tools_suivi import lier_chemin_local
+
+        _suivi_id, erreur = lier_chemin_local(suivi_id, chemin)
+        _rafraichir_panneaux_etudes("etudes_suivis")
+        return erreur
+
+    def _gerer_lier_ressource(id_: str, suivi_id: str, mode: str) -> None:
+        # Thread à part : le sélecteur natif bloque jusqu'à 120s, comme dans
+        # `_gerer_demander_picker`.
+        def tache() -> None:
+            from src.ui.attachments import open_file_picker
+
+            try:
+                chemin = open_file_picker(dossier=(mode == "dossier"))
+                if not chemin:
+                    # Annulé : rien à lier, mais l'île doit savoir que c'est fini.
+                    pont.envoyer(type="etudes_action_resultat", id=id_)
+                    return
+                erreur = _lier_chemin(suivi_id, chemin)
+                if erreur:
+                    pont.envoyer(type="etudes_action_erreur", id=id_, message=erreur)
+                else:
+                    pont.envoyer(type="etudes_action_resultat", id=id_)
+            except Exception as e:
+                pont.envoyer(type="etudes_action_erreur", id=id_, message=str(e))
+
+        threading.Thread(target=tache, daemon=True).start()
+
+    pont.sur_lier_ressource = _gerer_lier_ressource
+    pont.sur_supprimer_suivi = _gerer_supprimer_suivi
+    pont.sur_demander_flux = _gerer_demander_flux
+    pont.sur_planifier_rappels = _gerer_planifier_rappels
     pont.sur_joindre = _gerer_joindre
     pont.sur_detacher = _gerer_detacher
     pont.sur_demander_picker = _gerer_demander_picker

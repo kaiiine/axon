@@ -1,6 +1,6 @@
 import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
 import {get} from 'svelte/store';
-import {model,reset,receive,navigate,setDraft,submit,answer,chooseFreeform,open,openIntegration,demanderRaccourci,demanderDetail,demanderPicker,detacherPiece,creerSuivi,majEcheance} from '../ui/src/model';
+import {model,reset,receive,navigate,setDraft,submit,answer,chooseFreeform,open,openIntegration,demanderRaccourci,demanderDetail,demanderPicker,detacherPiece,creerSuivi,majEcheance,demanderFlux,ouvrirSuivi} from '../ui/src/model';
 describe('contrat Axon et état stable',()=>{
  let post=vi.fn();
  beforeEach(()=>{reset();post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};});
@@ -86,6 +86,30 @@ describe('contrat Axon et état stable',()=>{
   // composant — une reconnexion perdue peut ainsi le débloquer (voir le test
   // de déconnexion ci-dessous).
   expect(get(model).creationSuivi).toEqual({id,statut:'en_cours'});
+ });
+ it('un flux accumule ses morceaux puis se termine, et une déconnexion arrête un flux en cours',()=>{
+  receive({type:'connexion',connecte:true});
+  const id=demanderFlux('resume_suivi','suivi_a')!;
+  expect(post).toHaveBeenLastCalledWith({type:'demander_flux',id,genre:'resume_suivi',cible:'suivi_a'});
+  receive({type:'flux_morceau',id,texte:'**En bref** '});
+  receive({type:'flux_morceau',id,texte:'une API.'});
+  expect(get(model).flux[id]).toEqual({genre:'resume_suivi',cible:'suivi_a',texte:'**En bref** une API.',statut:'en_cours'});
+  receive({type:'flux_fin',id});
+  expect(get(model).flux[id].statut).toBe('fini');
+  const autre=demanderFlux('resume_suivi','suivi_b')!;
+  receive({type:'connexion',connecte:false});
+  expect(get(model).flux[autre]).toMatchObject({statut:'erreur'});
+  expect(get(model).flux[id].statut).toBe('fini'); // un flux terminé reste tel quel
+ });
+ it('ouvrir un suivi demande sa page, et une réponse pour un AUTRE suivi est ignorée',()=>{
+  receive({type:'connexion',connecte:true});
+  ouvrirSuivi('suivi_a');
+  expect(get(model).view).toBe('suivi');
+  expect(post).toHaveBeenLastCalledWith(expect.objectContaining({type:'raccourci',action:'etudes_page_suivi',item:'suivi_a'}));
+  receive({type:'raccourci_resultat',action:'etudes_page_suivi',item:'suivi_b',page:{id:'suivi_b'}});
+  expect(get(model).pageSuivi?.statut).toBe('loading');
+  receive({type:'raccourci_resultat',action:'etudes_page_suivi',item:'suivi_a',page:{id:'suivi_a',titre:'P'}});
+  expect(get(model).pageSuivi).toMatchObject({id:'suivi_a',statut:'ok',donnees:{titre:'P'}});
  });
  it('une déconnexion pendant une création de suivi en vol la fait échouer, pas rester bloquée',()=>{
   receive({type:'connexion',connecte:true});

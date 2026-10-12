@@ -282,8 +282,9 @@ def get_clipboard_image():
     return None
 
 
-def open_file_picker() -> Optional[str]:
-    """Ouvre un sélecteur de fichier natif. Retourne le chemin ou None.
+def open_file_picker(dossier: bool = False) -> Optional[str]:
+    """Ouvre un sélecteur natif — de fichier, ou de dossier si `dossier`.
+    Retourne le chemin choisi, ou None si annulé.
 
     L'île (couche layer-shell TOP) passerait au-dessus du dialogue : elle est
     priée de s'effacer le temps du choix, puis de revenir. Sans île lancée,
@@ -292,37 +293,33 @@ def open_file_picker() -> Optional[str]:
 
     pont.envoyer(type="selecteur_fichier", ouvert=True)
     try:
-        return _ouvrir_selecteur_natif()
+        return _ouvrir_selecteur_natif(dossier)
     finally:
         pont.envoyer(type="selecteur_fichier", ouvert=False)
 
 
-def _ouvrir_selecteur_natif() -> Optional[str]:
+def _ouvrir_selecteur_natif(dossier: bool = False) -> Optional[str]:
+    """Essaie zenity, puis kdialog, puis tkinter — le premier PRÉSENT décide.
+    Une annulation dans zenity ne doit pas ouvrir un second dialogue kdialog :
+    on ne passe au suivant que si l'outil n'est pas installé."""
     import subprocess
 
-    # zenity (GNOME / Wayland)
-    try:
-        r = subprocess.run(
-            ["zenity", "--file-selection", "--title=Joindre un fichier"],
-            capture_output=True, text=True, timeout=120,
-        )
+    titre = "Choisir un dossier" if dossier else "Joindre un fichier"
+    commandes = (
+        ["zenity", "--file-selection", f"--title={titre}"] + (["--directory"] if dossier else []),
+        ["kdialog", "--getexistingdirectory" if dossier else "--getopenfilename", ".", "--title", titre],
+    )
+    for commande in commandes:
+        try:
+            r = subprocess.run(commande, capture_output=True, text=True, timeout=120)
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            return None
         if r.returncode == 0:
             return r.stdout.strip() or None
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        return None
 
-    # kdialog (KDE)
-    try:
-        r = subprocess.run(
-            ["kdialog", "--getopenfilename", ".", "--title", "Joindre un fichier"],
-            capture_output=True, text=True, timeout=120,
-        )
-        if r.returncode == 0:
-            return r.stdout.strip() or None
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    # tkinter fallback
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -330,7 +327,10 @@ def _ouvrir_selecteur_natif() -> Optional[str]:
         root.withdraw()
         root.wm_attributes("-topmost", 1)
         root.update()
-        path = filedialog.askopenfilename(title="Joindre un fichier")
+        if dossier:
+            path = filedialog.askdirectory(title=titre)
+        else:
+            path = filedialog.askopenfilename(title=titre)
         root.destroy()
         return path or None
     except Exception:

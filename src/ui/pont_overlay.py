@@ -82,6 +82,18 @@ class PontOverlay:
         self.sur_maj_echeance = None
         #: Appelé (id, suivi_id).
         self.sur_archiver_suivi = None
+        #: Appelé (id, suivi_id, mode) — mode "fichier" ou "dossier" : ouvrir
+        #: le sélecteur natif dans ce mode puis lier le chemin choisi au suivi.
+        self.sur_lier_ressource = None
+        #: Appelé (id, suivi_id) — suppression définitive d'un suivi.
+        self.sur_supprimer_suivi = None
+        #: Appelé (id, genre, cible) — l'île demande un flux de texte (réponse
+        #: LLM en temps réel, voir src/ui/flux_overlay.py). Répondre par
+        #: `flux_morceau`/`flux_fin`/`flux_erreur` pour cet id.
+        self.sur_demander_flux = None
+        #: Appelé (id, suivi_id, echeance_id) — programmer les rappels par
+        #: défaut (7, 3 et 1 jours avant) d'une échéance.
+        self.sur_planifier_rappels = None
 
     # ---------- connexion ----------
     @property
@@ -171,6 +183,21 @@ class PontOverlay:
         elif message.get("type") == "archiver_suivi":
             if self.sur_archiver_suivi:
                 self.sur_archiver_suivi(str(message.get("id", "")), str(message.get("suivi_id", "")))
+        elif message.get("type") == "demander_flux":
+            if self.sur_demander_flux:
+                self.sur_demander_flux(str(message.get("id", "")), str(message.get("genre", "")),
+                                       str(message.get("cible", "")))
+        elif message.get("type") == "planifier_rappels":
+            if self.sur_planifier_rappels:
+                self.sur_planifier_rappels(str(message.get("id", "")), str(message.get("suivi_id", "")),
+                                           str(message.get("echeance_id", "")))
+        elif message.get("type") == "supprimer_suivi":
+            if self.sur_supprimer_suivi:
+                self.sur_supprimer_suivi(str(message.get("id", "")), str(message.get("suivi_id", "")))
+        elif message.get("type") == "lier_ressource":
+            if self.sur_lier_ressource:
+                mode = "dossier" if message.get("mode") == "dossier" else "fichier"
+                self.sur_lier_ressource(str(message.get("id", "")), str(message.get("suivi_id", "")), mode)
 
     def _perdre(self, s: socket.socket) -> None:
         with self.verrou:

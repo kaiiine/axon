@@ -177,6 +177,37 @@ def etude_archiver_suivi(suivi_id: str, archive: bool = True) -> str:
     return f"Suivi **{s['titre']}** {'archivé' if archive else 'réactivé'}."
 
 
+
+@tool("etude_supprimer_suivi")
+def etude_supprimer_suivi(suivi_id: str) -> str:
+    """
+    Supprime DÉFINITIVEMENT un suivi — à n'utiliser que sur demande explicite
+    (« supprime ce suivi ») ; pour simplement le sortir de la liste, préfère
+    `etude_archiver_suivi`, réversible. Ses rappels sont désactivés ; ses
+    fiches et exercices générés sont gardés (redeviennent non rattachés) ;
+    les fichiers, dossiers et dépôts liés ne sont jamais touchés sur le disque.
+
+    Mots-clés : supprimer suivi, effacer, retirer définitivement.
+
+    **Args:**
+        - `suivi_id` (str)
+
+    **Returns:**
+        - Confirmation, ou erreur si le suivi est introuvable.
+    """
+    from src.agents.cron.store import deactivate_task
+    from .store import supprimer_suivi
+
+    s = supprimer_suivi(suivi_id)
+    if s is None:
+        return f"Suivi introuvable : {suivi_id}"
+    # Après la suppression, pas avant : si elle échouait, le suivi garderait
+    # des rappels actifs plutôt que des rappels morts pour un suivi intact.
+    rappels = list(s["rappels"]) + [r for e in s["echeances"] for r in e["rappels"]]
+    for rappel in rappels:
+        deactivate_task(rappel["cron_id"])
+    return f"Suivi **{s['titre']}** supprimé ({len(rappels)} rappel(s) désactivé(s))."
+
 # ── ressources ───────────────────────────────────────────────────────────
 
 @tool("etude_associer_ressource")
@@ -224,6 +255,56 @@ def etude_associer_ressource(
     associer_ressource(suivi_id, ressource["id"])
     detail = f" (branche {extra['branche']}, {extra['commit']})" if extra.get("branche") else ""
     return f"Ressource associée : **{nom}**{detail}.\nID : `{ressource['id']}`"
+
+
+def lier_chemin_local(suivi_id: str, chemin: str) -> tuple[str | None, str | None]:
+    """Lie un fichier ou dossier local choisi dans l'île à un suivi — ou, sans
+    `suivi_id`, crée d'abord un suivi au nom du dossier. Pas un tool : c'est
+    l'île qui appelle, avec un chemin déjà choisi par l'utilisateur.
+
+    Un dossier qui contient des dépôts Git (un projet front + back, par
+    exemple) lie aussi chacun d'eux en `depot_git`, avec sa branche et son
+    commit, et le suivi créé est un « projet ». Un chemin déjà lié à ce suivi
+    n'est pas lié une seconde fois.
+
+    Renvoie (suivi_id, erreur) : erreur vaut None si tout s'est bien passé.
+    """
+    from pathlib import Path
+
+    from ._aide import depots_git_dans, type_ressource_pour_chemin
+    from .store import obtenir_ressource, obtenir_suivi
+
+    type_ressource = type_ressource_pour_chemin(chemin)
+    sous_depots = depots_git_dans(chemin) if type_ressource == "dossier" else []
+
+    if not suivi_id:
+        est_un_projet = type_ressource == "depot_git" or bool(sous_depots)
+        reponse = etude_creer_suivi.invoke({"titre": Path(chemin).name or chemin,
+                                            "type": "projet" if est_un_projet else "autre"})
+        if "`" not in reponse:
+            return None, reponse
+        suivi_id = reponse.split("`")[1]
+
+    suivi = obtenir_suivi(suivi_id)
+    if suivi is None:
+        return None, f"Suivi introuvable : {suivi_id}"
+    deja_lies = set()
+    for rid in suivi["ressources"]:
+        ressource = obtenir_ressource(rid)
+        if ressource is not None:
+            deja_lies.add(ressource["chemin"])
+
+    a_lier = [(type_ressource, chemin)] + [("depot_git", depot) for depot in sous_depots]
+    for type_a_lier, chemin_a_lier in a_lier:
+        if chemin_a_lier in deja_lies:
+            continue
+        reponse = etude_associer_ressource.invoke({
+            "suivi_id": suivi_id, "type": type_a_lier,
+            "nom": Path(chemin_a_lier).name or chemin_a_lier, "chemin": chemin_a_lier,
+        })
+        if reponse.startswith(("Suivi introuvable", "Type inconnu")):
+            return suivi_id, reponse
+    return suivi_id, None
 
 
 @tool("etude_retirer_ressource")

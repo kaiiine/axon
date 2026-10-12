@@ -32,7 +32,7 @@ def test_actions_est_une_liste_blanche_lecture_seule():
         # Études : lecture du store local. `etudes_ouvrir_fiche` lance
         # `xdg-open` sur un fichier déjà généré, sans rien modifier.
         "etudes_fiches_recentes", "etudes_ouvrir_fiche", "etudes_suivis",
-        "etudes_echeances", "etudes_detail_suivi",
+        "etudes_echeances", "etudes_detail_suivi", "etudes_page_suivi",
     }
 
 

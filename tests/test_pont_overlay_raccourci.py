@@ -93,3 +93,36 @@ def test_gestion_echeances_sans_hooks_ne_leve_pas():
     pont._traiter({"type": "creer_echeance", "id": "e1", "suivi_id": "s"})
     pont._traiter({"type": "maj_echeance", "id": "e2", "suivi_id": "s", "echeance_id": "ech"})
     pont._traiter({"type": "archiver_suivi", "id": "e3", "suivi_id": "s"})
+
+
+def test_lier_ressource_transmet_le_mode_et_retombe_sur_fichier():
+    pont = PontOverlay()
+    appels = []
+    pont.sur_lier_ressource = lambda *a: appels.append(a)
+
+    pont._traiter({"type": "lier_ressource", "id": "r1", "suivi_id": "s", "mode": "dossier"})
+    pont._traiter({"type": "lier_ressource", "id": "r2", "suivi_id": "s", "mode": "nimporte"})
+
+    assert appels == [("r1", "s", "dossier"), ("r2", "s", "fichier")]
+
+
+def test_supprimer_suivi_transmet_id_et_suivi_id():
+    pont = PontOverlay()
+    appels = []
+    pont.sur_supprimer_suivi = lambda *a: appels.append(a)
+
+    pont._traiter({"type": "supprimer_suivi", "id": "d1", "suivi_id": "suivi_a"})
+
+    assert appels == [("d1", "suivi_a")]
+
+
+def test_demander_flux_et_planifier_rappels_sont_transmis():
+    pont = PontOverlay()
+    appels = []
+    pont.sur_demander_flux = lambda *a: appels.append(("flux", *a))
+    pont.sur_planifier_rappels = lambda *a: appels.append(("rappels", *a))
+
+    pont._traiter({"type": "demander_flux", "id": "f1", "genre": "resume_suivi", "cible": "suivi_a"})
+    pont._traiter({"type": "planifier_rappels", "id": "r1", "suivi_id": "suivi_a", "echeance_id": "ech_1"})
+
+    assert appels == [("flux", "f1", "resume_suivi", "suivi_a"), ("rappels", "r1", "suivi_a", "ech_1")]

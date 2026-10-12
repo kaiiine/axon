@@ -1,4 +1,4 @@
-export type View = 'home' | 'chat' | 'code' | 'settings' | 'integrations' | 'etudes';
+export type View = 'home' | 'chat' | 'code' | 'settings' | 'integrations' | 'etudes' | 'suivi';
 export type AgentState = 'idle' | 'thinking' | 'working' | 'waiting' | 'finished' | 'sleeping' | 'error';
 export interface Question { texte: string; choix: string[]; affirmatif?: string; libre?: boolean }
 export interface Request { id: string | number; genre: string; apercu: string; questions: Question[]; answers: string[]; legacy?: boolean; freeform?: boolean }
@@ -17,7 +17,7 @@ export interface IntegrationData { status: 'loading' | 'ok' | 'error'; stats?: I
 //: (src/ui/attachments.py), pas son contenu complet (jamais envoyé sur le
 //: socket, seulement le nécessaire pour l'afficher).
 export interface AttachmentItem { nom: string; statut: 'chargement' | 'ok' | 'erreur'; message?: string; estImage: boolean; taille: string }
-export type Outbound = { type: 'commande'; texte: string } | { type: 'reponse_demande'; id: string | number; reponses: string[] } | { type: 'decision'; id: string | number; accord: boolean } | { type: 'demander_commandes' } | { type: 'mode'; mode: 'accueil' | 'detail' } | { type: 'ouvrir'; ouvert: boolean } | { type: 'pret' } | { type: 'raccourci'; id: string; action: string; item?: string; panel?: string } | { type: 'joindre'; chemin: string } | { type: 'detacher'; nom: string } | { type: 'demander_picker' } | { type: 'creer_suivi'; id: string; titre: string; type_suivi: string; matiere?: string } | { type: 'creer_echeance'; id: string; suivi_id: string; titre: string; type_echeance: string; date: string } | { type: 'maj_echeance'; id: string; suivi_id: string; echeance_id: string; date?: string; statut?: string } | { type: 'archiver_suivi'; id: string; suivi_id: string };
+export type Outbound = { type: 'commande'; texte: string } | { type: 'reponse_demande'; id: string | number; reponses: string[] } | { type: 'decision'; id: string | number; accord: boolean } | { type: 'demander_commandes' } | { type: 'mode'; mode: 'accueil' | 'detail' } | { type: 'ouvrir'; ouvert: boolean } | { type: 'pret' } | { type: 'raccourci'; id: string; action: string; item?: string; panel?: string } | { type: 'joindre'; chemin: string } | { type: 'detacher'; nom: string } | { type: 'demander_picker' } | { type: 'creer_suivi'; id: string; titre: string; type_suivi: string; matiere?: string } | { type: 'creer_echeance'; id: string; suivi_id: string; titre: string; type_echeance: string; date: string } | { type: 'maj_echeance'; id: string; suivi_id: string; echeance_id: string; date?: string; statut?: string } | { type: 'archiver_suivi'; id: string; suivi_id: string } | { type: 'lier_ressource'; id: string; suivi_id: string; mode: 'fichier' | 'dossier' } | { type: 'supprimer_suivi'; id: string; suivi_id: string } | { type: 'demander_flux'; id: string; genre: string; cible: string } | { type: 'planifier_rappels'; id: string; suivi_id: string; echeance_id: string };
 //: Réponse à UNE soumission du formulaire de création de suivi, identifiée
 //: par `id` (§2, lot 3) — jamais "le dernier suivi créé", pour qu'une
 //: réponse tardive ne vienne pas clore un formulaire déjà réutilisé pour
@@ -29,5 +29,21 @@ export interface CreationSuivi { id: string; statut: 'en_cours' | 'ok' | 'erreur
 //: (ok, ou erreur avec message) et ne sont jamais deux en vol en même
 //: temps pour un même composant.
 export interface ActionEtudes { id: string; statut: 'en_cours' | 'ok' | 'erreur'; message?: string }
-export interface Model { view: View; state: AgentState; connected: boolean; visible: boolean; demo: boolean; detail: string; draft: string; messages: Message[]; activity: Activity[]; requests: Request[]; commands: Command[]; file: FileContent | null; busy: boolean; motion: boolean; sound: boolean; notice: string; unread: number; integration: string | null; integrationData: Record<string, IntegrationData>; attachments: AttachmentItem[]; dragActif: boolean; creationSuivi: CreationSuivi | null; actionEtudes: ActionEtudes | null }
+//: Texte produit en temps réel par un appel LLM (src/ui/flux_overlay.py),
+//: identifié par l'id de la demande — générique, pas propre aux études.
+export interface Flux { genre: string; cible: string; texte: string; statut: 'en_cours' | 'fini' | 'erreur'; message?: string }
+export interface EvenementCalendrier { date: string; libelle: string; genre: string }
+export interface PageSuivi {
+ id: string; titre: string; type: string; description: string;
+ echeances: { id: string; titre: string; type: string; date: string; dateCourte: string; restant: string; statut: string; rappels: number }[];
+ taches: { id: string; titre: string; statut: string }[];
+ exercices: { total: number; termines: number };
+ ressources: { id: string; nom: string; type: string; chemin: string; branche?: string; age?: string; sujet?: string; modifies?: number }[];
+ resultats: { fichier: string; type: string; date: string }[];
+ verification: { date: string; texte: string } | null;
+ resume: { texte: string; date: string } | null;
+ calendrier: EvenementCalendrier[];
+}
+export interface EtatPageSuivi { id: string; statut: 'loading' | 'ok' | 'error'; donnees?: PageSuivi; message?: string }
+export interface Model { view: View; state: AgentState; connected: boolean; visible: boolean; demo: boolean; detail: string; draft: string; messages: Message[]; activity: Activity[]; requests: Request[]; commands: Command[]; file: FileContent | null; busy: boolean; motion: boolean; sound: boolean; notice: string; unread: number; integration: string | null; integrationData: Record<string, IntegrationData>; attachments: AttachmentItem[]; dragActif: boolean; creationSuivi: CreationSuivi | null; actionEtudes: ActionEtudes | null; pageSuivi: EtatPageSuivi | null; flux: Record<string, Flux> }
 declare global { interface Window { __axonAssets?:Record<string,string>; __axonPreview?:boolean; axon?: { recevoir: (message: unknown) => void; ouvrir: (open: boolean) => void; apercu: () => void; entree: () => void; rejouer: () => void }; webkit?: { messageHandlers?: { axon?: { postMessage: (message: Outbound) => void } } } } }

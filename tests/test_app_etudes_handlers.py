@@ -128,3 +128,110 @@ def test_le_demarrage_purge_une_generation_restee_en_cours(monkeypatch, tmp_path
     _demarrer_cli(monkeypatch, tmp_path)
 
     assert store.obtenir_generation(bloquee["id"])["statut"] == "echouee"
+
+
+def _attendre_reponse(envois, id_, delai=3.0):
+    """`sur_lier_ressource` travaille dans un thread (le sélecteur natif
+    bloque) : on attend sa réponse pour CET id."""
+    import time
+    fin = time.time() + delai
+    while time.time() < fin:
+        for e in envois:
+            if e.get("id") == id_ and e["type"] in ("etudes_action_resultat", "etudes_action_erreur"):
+                return e
+        time.sleep(0.02)
+    raise AssertionError(f"pas de réponse pour {id_}")
+
+
+def test_lier_un_depot_git_l_associe_au_suivi_comme_depot(app, monkeypatch, tmp_path):
+    pont, store, envois = app
+    depot = tmp_path / "compilateur"
+    (depot / ".git").mkdir(parents=True)
+    import src.ui.attachments as attachments
+    monkeypatch.setattr(attachments, "open_file_picker", lambda dossier=False: str(depot) if dossier else None)
+    suivi = store.creer_suivi("Projet Compilateur", "projet")
+
+    pont.sur_lier_ressource("l1", suivi["id"], "dossier")
+
+    assert _attendre_reponse(envois, "l1")["type"] == "etudes_action_resultat"
+    ressources = [store.obtenir_ressource(rid) for rid in store.obtenir_suivi(suivi["id"])["ressources"]]
+    assert [(r["type"], r["chemin"], r["provenance"]) for r in ressources] == [("depot_git", str(depot), "chemin_externe")]
+    ligne = next(e for e in envois if e["type"] == "raccourci_resultat" and e["action"] == "etudes_suivis")["rows"][0]
+    assert "1 ressource" in ligne["meta"]
+
+
+def test_annuler_le_selecteur_ne_lie_rien_mais_repond(app, monkeypatch):
+    pont, store, envois = app
+    import src.ui.attachments as attachments
+    monkeypatch.setattr(attachments, "open_file_picker", lambda dossier=False: None)
+    suivi = store.creer_suivi("ML", "matiere")
+
+    pont.sur_lier_ressource("l2", suivi["id"], "fichier")
+
+    assert _attendre_reponse(envois, "l2")["type"] == "etudes_action_resultat"
+    assert store.obtenir_suivi(suivi["id"])["ressources"] == []
+
+
+def test_un_depot_choisi_sans_suivi_cree_un_projet_a_son_nom(app, monkeypatch, tmp_path):
+    """Bouton « Dossier ou dépôt » de la zone de dépôt : pas de suivi visé,
+    le dépôt devient un suivi « projet » à son nom, avec le dépôt lié."""
+    pont, store, envois = app
+    depot = tmp_path / "compilateur"
+    (depot / ".git").mkdir(parents=True)
+    import src.ui.attachments as attachments
+    monkeypatch.setattr(attachments, "open_file_picker", lambda dossier=False: str(depot))
+
+    pont.sur_lier_ressource("l3", "", "dossier")
+
+    assert _attendre_reponse(envois, "l3")["type"] == "etudes_action_resultat"
+    [suivi] = store.lister_suivis()
+    assert (suivi["titre"], suivi["type"]) == ("compilateur", "projet")
+    assert store.obtenir_ressource(suivi["ressources"][0])["type"] == "depot_git"
+
+
+def test_glisser_un_dossier_sur_l_ile_cree_un_suivi_au_lieu_d_une_piece_jointe(app, tmp_path):
+    import time
+    pont, store, envois = app
+    dossier = tmp_path / "cours-reseaux"
+    dossier.mkdir()
+
+    pont.sur_joindre(str(dossier))
+
+    fin = time.time() + 3
+    while not store.lister_suivis() and time.time() < fin:
+        time.sleep(0.02)
+    [suivi] = store.lister_suivis()
+    assert (suivi["titre"], suivi["type"]) == ("cours-reseaux", "autre")
+    assert store.obtenir_ressource(suivi["ressources"][0])["type"] == "dossier"
+    from src.ui.attachments import attachments as pieces
+    assert all(a.name != "cours-reseaux" for a in pieces.items)
+
+
+def test_supprimer_un_suivi_depuis_l_ile(app):
+    pont, store, envois = app
+    suivi = store.creer_suivi("be-cds", "projet")
+
+    pont.sur_supprimer_suivi("d1", suivi["id"])
+
+    assert store.lister_suivis() == []
+    assert {"type": "etudes_action_resultat", "id": "d1"} in envois
+
+
+def test_supprimer_un_suivi_inconnu_repond_une_erreur(app):
+    pont, _store, envois = app
+
+    pont.sur_supprimer_suivi("d2", "suivi_inexistant")
+
+    assert _reponses(envois, "etudes_action_erreur")[0]["id"] == "d2"
+
+
+def test_la_cloche_programme_les_rappels_d_une_echeance(app):
+    pont, store, envois = app
+    from src.agents.cron.store import get_tasks
+    suivi = store.creer_suivi("P", "projet")
+    echeance = store.ajouter_echeance(suivi["id"], "Rendu", "rendu_projet", "2099-12-10")
+
+    pont.sur_planifier_rappels("c1", suivi["id"], echeance["id"])
+
+    assert {"type": "etudes_action_resultat", "id": "c1"} in envois
+    assert len([t for t in get_tasks() if t["active"]]) == 3

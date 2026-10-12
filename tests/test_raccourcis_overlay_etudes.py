@@ -143,3 +143,27 @@ def test_une_echeance_annulee_disparait_des_prochaines(etudes):
     ids = [r["id"] for r in raccourcis.executer("etudes_echeances")["rows"]]
 
     assert ids == [gardee["id"]]
+
+
+def test_la_page_projet_rassemble_tout_et_alimente_le_calendrier(etudes):
+    raccourcis, store = etudes
+    suivi = store.creer_suivi("Compilateur", "projet")
+    echeance = store.ajouter_echeance(suivi["id"], "Rendu final", "rendu_projet", "2099-12-10")
+    store.ajouter_rappel_echeance(suivi["id"], echeance["id"], "cron_x", "2099-12-03T09:00:00+01:00", 7)
+    store.ajouter_tache(suivi["id"], "Parser")
+    store.ajouter_resultat("fiche", "fiche_compil.html", suivi_id=suivi["id"])
+
+    page = raccourcis.executer("etudes_page_suivi", suivi["id"])["page"]
+
+    assert (page["titre"], page["type"]) == ("Compilateur", "Projet")
+    assert page["echeances"][0]["dateCourte"] == "10 déc." and page["echeances"][0]["rappels"] == 1
+    assert page["taches"][0]["titre"] == "Parser"
+    assert page["resultats"][0]["fichier"] == "fiche_compil.html"
+    genres = {ev["genre"] for ev in page["calendrier"]}
+    assert {"echeance", "rappel", "resultat"} <= genres
+
+
+def test_la_page_d_un_suivi_inconnu_leve(etudes):
+    raccourcis, _store = etudes
+    with pytest.raises(ValueError):
+        raccourcis.executer("etudes_page_suivi", "suivi_inexistant")

@@ -414,3 +414,83 @@ it('archiver un suivi poste archiver_suivi avec son id',async()=>{
  expect(post).toHaveBeenCalledWith(expect.objectContaining({type:'archiver_suivi',suivi_id:'suivi_abc'}));
  await unmount(app);target.remove();delete window.webkit;reset();
 });
+it('« Ajouter un autre dossier ou dépôt » sur un suivi demande le sélecteur en mode dossier, et un échec s’affiche',async()=>{
+ reset();const post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};const target=document.createElement('div');document.body.append(target);const app=mount(App,{target});await tick();
+ receive({type:'connexion',connecte:true});navigate('etudes');await tick();
+ receive({type:'raccourci_resultat',action:'etudes_suivis',stats:[{label:'Suivis actifs',value:'1',accent:true}],rows:[{title:'Projet Compilateur',meta:'Aucune échéance',tag:'Projet',id:'suivi_abc'}]});
+ await tick();
+
+ const bouton=(label:string)=>[...sectionÉtudes(target,'Suivis').querySelectorAll('.row-action')].find(b=>b.getAttribute('aria-label')===label) as HTMLButtonElement|undefined;
+ expect(bouton('Ajouter un fichier')).not.toBeUndefined();
+ post.mockClear();
+ bouton('Ajouter un autre dossier ou dépôt')!.click();await tick();
+ const message=post.mock.calls.find(c=>c[0].type==='lier_ressource')?.[0];
+ expect(message).toMatchObject({type:'lier_ressource',suivi_id:'suivi_abc',mode:'dossier'});
+
+ receive({type:'etudes_action_erreur',id:message.id,message:'Suivi introuvable : suivi_abc'});
+ await tick();
+ expect(target.querySelector('.notice')?.textContent).toContain('Suivi introuvable');
+ await unmount(app);target.remove();delete window.webkit;reset();
+});
+it('la zone de dépôt propose « Fichier » et « Dossier ou dépôt », ce dernier sans suivi visé',async()=>{
+ reset();const post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};const target=document.createElement('div');document.body.append(target);const app=mount(App,{target});await tick();
+ receive({type:'connexion',connecte:true});navigate('etudes');await tick();
+ const boutons=[...target.querySelectorAll('.drop button')] as HTMLButtonElement[];
+ expect(boutons.map(b=>b.textContent?.trim())).toEqual(['Fichier','Dossier ou dépôt']);
+ post.mockClear();
+ boutons[0].click();await tick();
+ expect(post).toHaveBeenCalledWith({type:'demander_picker'});
+ boutons[1].click();await tick();
+ expect(post).toHaveBeenCalledWith(expect.objectContaining({type:'lier_ressource',suivi_id:'',mode:'dossier'}));
+ await unmount(app);target.remove();delete window.webkit;reset();
+});
+it('supprimer un suivi demande un second clic de confirmation avant d’envoyer quoi que ce soit',async()=>{
+ reset();const post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};const target=document.createElement('div');document.body.append(target);const app=mount(App,{target});await tick();
+ receive({type:'connexion',connecte:true});navigate('etudes');await tick();
+ receive({type:'raccourci_resultat',action:'etudes_suivis',stats:[],rows:[{title:'be-cds',meta:'1 ressource',tag:'Projet',id:'suivi_be'}]});
+ await tick();
+ const bouton=(label:string)=>[...sectionÉtudes(target,'Suivis').querySelectorAll('.row-action')].find(b=>b.getAttribute('aria-label')===label) as HTMLButtonElement|undefined;
+
+ post.mockClear();
+ bouton('Supprimer le suivi')!.click();await tick();
+ expect(post.mock.calls.filter(c=>c[0].type==='supprimer_suivi')).toHaveLength(0); // juste armé
+ const confirmer=bouton('Confirmer la suppression');
+ expect(confirmer?.classList.contains('danger')).toBe(true);
+
+ confirmer!.click();await tick();
+ expect(post).toHaveBeenCalledWith(expect.objectContaining({type:'supprimer_suivi',suivi_id:'suivi_be'}));
+ expect(bouton('Supprimer le suivi')).not.toBeUndefined(); // désarmé après envoi
+ await unmount(app);target.remove();delete window.webkit;reset();
+});
+it('cliquer un suivi ouvre sa page : données tout de suite, résumé IA en flux, puis rechargement',async()=>{
+ reset();const post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};const target=document.createElement('div');document.body.append(target);const app=mount(App,{target});await tick();
+ receive({type:'connexion',connecte:true});navigate('etudes');await tick();
+ receive({type:'raccourci_resultat',action:'etudes_suivis',stats:[],rows:[{title:'Conseil des Sages',meta:'2 ressources',tag:'Projet',id:'suivi_cds'}]});
+ await tick();
+ (sectionÉtudes(target,'Suivis').querySelector('.text.ouvrir') as HTMLButtonElement).click();await tick();
+ expect(get(model).view).toBe('suivi');
+
+ post.mockClear();
+ receive({type:'raccourci_resultat',action:'etudes_page_suivi',item:'suivi_cds',page:{
+  id:'suivi_cds',titre:'Conseil des Sages',type:'Projet',description:'',
+  echeances:[{id:'e1',titre:'Rendu final',type:'Rendu',date:'2099-12-10',dateCourte:'10 déc.',restant:'dans 59 jours',statut:'a_venir',rappels:0}],
+  taches:[],exercices:{total:0,termines:0},
+  ressources:[{id:'r1',nom:'be-cds',type:'depot_git',chemin:'/x',branche:'feat/user-post',age:'il y a 7 h',sujet:'adding post',modifies:0}],
+  resultats:[],verification:null,resume:null,calendrier:[{date:'2099-12-10',libelle:'Rendu final',genre:'echeance'}]}});
+ await tick();
+ const page=target.querySelector('.page') as HTMLElement;
+ expect(page.textContent).toContain('Conseil des Sages');
+ expect(page.textContent).toContain('feat/user-post · il y a 7 h · adding post'); // données locales, sans attendre l'IA
+ expect(page.querySelector('[aria-label="Programmer les rappels"]')).not.toBeNull(); // 0 rappel → cloche
+ const demande=post.mock.calls.find(c=>c[0].type==='demander_flux')?.[0];
+ expect(demande).toMatchObject({genre:'resume_suivi',cible:'suivi_cds'}); // pas de résumé en cache → demandé tout seul
+ await tick(); // flux demandé pendant le rendu de la page : visible au tick suivant
+ expect(page.querySelector('.attente')).not.toBeNull(); // squelette tant que rien n'arrive
+
+ receive({type:'flux_morceau',id:demande.id,texte:'**En bref** une plateforme de débats.'});await tick();
+ expect(page.querySelector('.flux .md strong')?.textContent).toBe('En bref');
+ post.mockClear();
+ receive({type:'flux_fin',id:demande.id});await tick();
+ expect(post).toHaveBeenCalledWith(expect.objectContaining({type:'raccourci',action:'etudes_page_suivi',item:'suivi_cds'})); // résumé enregistré → page rechargée
+ await unmount(app);target.remove();delete window.webkit;reset();
+});

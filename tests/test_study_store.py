@@ -445,3 +445,27 @@ def test_purger_generations_bloquees_echoue_les_en_cours(store):
     assert store.obtenir_generation(bloquee["id"])["statut"] == "echouee"
     assert store.obtenir_generation(terminee["id"])["statut"] == "terminee"  # pas touchée
     assert store.generation_active("suivi_a", "fiche") is None  # débloqué
+
+
+# ── suppression définitive d'un suivi ─────────────────────────────────
+
+def test_supprimer_un_suivi_garde_ses_resultats_et_les_ressources_partagees(store):
+    gardee = store.creer_suivi("Gardé", "projet")
+    supprime = store.creer_suivi("À supprimer", "projet")
+    partagee = store.ajouter_ressource("depot_git", "back", "chemin_externe", "/p/back")
+    exclusive = store.ajouter_ressource("dossier", "brouillon", "chemin_externe", "/p/brouillon")
+    store.associer_ressource(gardee["id"], partagee["id"])
+    store.associer_ressource(supprime["id"], partagee["id"])
+    store.associer_ressource(supprime["id"], exclusive["id"])
+    resultat = store.ajouter_resultat("fiche", "fiche.html", suivi_id=supprime["id"])
+
+    assert store.supprimer_suivi(supprime["id"])["titre"] == "À supprimer"
+
+    assert [s["id"] for s in store.lister_suivis()] == [gardee["id"]]
+    assert store.obtenir_resultat(resultat["id"])["suivi_id"] is None  # fiche gardée, détachée
+    assert store.obtenir_ressource(partagee["id"]) is not None          # encore utilisée ailleurs
+    assert store.obtenir_ressource(exclusive["id"]) is None             # ne servait qu'à lui
+
+
+def test_supprimer_un_suivi_inconnu_renvoie_none(store):
+    assert store.supprimer_suivi("suivi_inexistant") is None

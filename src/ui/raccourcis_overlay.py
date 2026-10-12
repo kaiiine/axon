@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from src.agents.study._aide import date_courte
+
 
 def _gmail_non_lus(_item: str | None) -> dict[str, Any]:
     from src.agents.gmail.tools import gmail_search
@@ -156,19 +158,6 @@ def _dossier_fiches():
 _LIBELLES_SUIVI = {"matiere": "Matière", "projet": "Projet", "ponctuel": "Ponctuel", "autre": "Autre"}
 _LIBELLES_ECHEANCE = {"devoir": "Devoir", "partiel": "Partiel", "rendu_projet": "Rendu", "autre": "Autre"}
 _LIBELLES_RESULTAT = {"fiche": "Fiche", "exo": "Exercices"}
-_MOIS = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.")
-
-
-def _date_courte(date_iso: str) -> str:
-    """« 2026-11-25 » → « 25 nov. ». Laisse la chaîne telle quelle si elle
-    n'est pas une date ISO (donnée ancienne ou saisie libre)."""
-    from datetime import date
-
-    try:
-        d = date.fromisoformat(date_iso[:10])
-    except ValueError:
-        return date_iso
-    return f"{d.day} {_MOIS[d.month - 1]}"
 
 
 def _champs_generation(suivi_id: str | None) -> dict[str, Any]:
@@ -205,7 +194,7 @@ def _etudes_fiches_recentes(_item: str | None) -> dict[str, Any]:
     connus = {r["fichier"] for r in resultats}
     rows = [
         {"title": Path(r["fichier"]).stem,
-         "meta": f"{_date_courte(r['created_at'])} {r['created_at'][11:16]}".strip(),
+         "meta": f"{date_courte(r['created_at'])} {r['created_at'][11:16]}".strip(),
          "tag": _LIBELLES_RESULTAT.get(r["type"], r["type"]), "id": r["fichier"]}
         for r in resultats
     ]
@@ -220,7 +209,7 @@ def _etudes_fiches_recentes(_item: str | None) -> dict[str, Any]:
             type_fichier = f.stem.split("_", 1)[0]
             rows.append({
                 "title": f.stem,
-                "meta": f"{_date_courte(modifie.date().isoformat())} {modifie:%H:%M}",
+                "meta": f"{date_courte(modifie.date().isoformat())} {modifie:%H:%M}",
                 "tag": _LIBELLES_RESULTAT.get(type_fichier, ""),
                 "id": f.name,
             })
@@ -238,10 +227,13 @@ def _etudes_suivis(_item: str | None) -> dict[str, Any]:
                           key=lambda e: e.get("date", ""))
         morceaux = []
         if a_venir:
-            morceaux.append(f"{a_venir[0]['titre']} le {_date_courte(a_venir[0]['date'])}")
+            morceaux.append(f"{a_venir[0]['titre']} le {date_courte(a_venir[0]['date'])}")
         if s["exercices"]:
             termines = sum(1 for x in s["exercices"] if x.get("statut") == "termine")
             morceaux.append(f"{termines}/{len(s['exercices'])} exercices")
+        nb_ressources = len(s["ressources"])
+        if nb_ressources:
+            morceaux.append(f"{nb_ressources} ressource" + ("s" if nb_ressources > 1 else ""))
         meta = " · ".join(morceaux) or "Aucune échéance"
         rows.append({"title": s["titre"], "meta": meta, "tag": _LIBELLES_SUIVI.get(s["type"], s["type"]),
                       "id": s["id"], **_champs_generation(s["id"])})
@@ -262,11 +254,82 @@ def _etudes_echeances(_item: str | None) -> dict[str, Any]:
         # `etude_maj_echeance` prend `suivi_id` + `echeance_id`, pas
         # l'échéance seule.
         {"title": e["titre"],
-         "meta": f"{suivi['titre']} · {_date_courte(e['date'])}, {temps_restant_texte(e['date'])}",
+         "meta": f"{suivi['titre']} · {date_courte(e['date'])}, {temps_restant_texte(e['date'])}",
          "tag": _LIBELLES_ECHEANCE.get(e["type"], e["type"]), "id": e["id"], "suiviId": suivi["id"]}
         for suivi, e in paires
     ]
     return {"stats": [{"label": "À venir", "value": str(len(rows)), "accent": True}], "rows": rows}
+
+
+def _etudes_page_suivi(item: str | None) -> dict[str, Any]:
+    """Tout ce que la page projet de l'île affiche, en un aller-retour : le
+    suivi, ses échéances, tâches, ressources (avec l'état des dépôts),
+    résultats, dernière vérification, dernier résumé IA, et les événements
+    de son calendrier. Rien n'appelle de LLM ici : la page s'affiche tout de
+    suite, le résumé arrive à part, en flux (`flux_overlay`)."""
+    from datetime import datetime
+    from src.agents.study._aide import derniers_commits, etat_depot, temps_restant_texte
+    from src.agents.study.store import lister_resultats, lister_verifications, obtenir_ressource, obtenir_suivi
+
+    if not item:
+        raise ValueError("identifiant de suivi manquant")
+    suivi = obtenir_suivi(item)
+    if suivi is None:
+        raise ValueError(f"Suivi introuvable : {item}")
+
+    calendrier: list[dict[str, str]] = []
+
+    echeances = []
+    for e in sorted(suivi["echeances"], key=lambda e: e.get("date", "")):
+        echeances.append({
+            "id": e["id"], "titre": e["titre"], "type": _LIBELLES_ECHEANCE.get(e["type"], e["type"]),
+            "date": e["date"], "dateCourte": date_courte(e["date"]), "restant": temps_restant_texte(e["date"]),
+            "statut": e["statut"], "rappels": len(e["rappels"]),
+        })
+        if e["statut"] != "annulee":
+            calendrier.append({"date": e["date"][:10], "libelle": e["titre"], "genre": "echeance"})
+            for rappel in e["rappels"]:
+                calendrier.append({"date": rappel["quand"][:10], "libelle": f"Rappel · {e['titre']}", "genre": "rappel"})
+
+    ressources = []
+    for rid in suivi["ressources"]:
+        r = obtenir_ressource(rid)
+        if r is None:
+            continue
+        ligne = {"id": r["id"], "nom": r["nom"], "type": r["type"], "chemin": r["chemin"]}
+        if r["type"] == "depot_git":
+            etat = etat_depot(r["chemin"])
+            if etat is not None:
+                ligne.update({"branche": etat["branche"], "age": etat["age"], "sujet": etat["sujet"],
+                              "modifies": etat["modifies"]})
+            for horodatage, sujet in derniers_commits(r["chemin"]):
+                calendrier.append({"date": datetime.fromtimestamp(horodatage).date().isoformat(),
+                                   "libelle": f"{r['nom']} · {sujet}", "genre": "commit"})
+        ressources.append(ligne)
+
+    resultats = []
+    for res in lister_resultats(limite=8, suivi_id=item):
+        resultats.append({"fichier": res["fichier"], "type": _LIBELLES_RESULTAT.get(res["type"], res["type"]),
+                          "date": date_courte(res["created_at"])})
+        calendrier.append({"date": res["created_at"][:10], "libelle": res["fichier"], "genre": "resultat"})
+
+    verification = None
+    verifications = lister_verifications(item, limite=1)
+    if verifications:
+        verification = {"date": date_courte(verifications[0]["date"]), "texte": verifications[0]["texte"]}
+        calendrier.append({"date": verifications[0]["date"][:10], "libelle": "Vérification", "genre": "verification"})
+
+    exercices = suivi["exercices"]
+    page = {
+        "id": suivi["id"], "titre": suivi["titre"], "type": _LIBELLES_SUIVI.get(suivi["type"], suivi["type"]),
+        "description": suivi.get("description", ""),
+        "echeances": echeances,
+        "taches": [{"id": t["id"], "titre": t["titre"], "statut": t["statut"]} for t in suivi["taches"]],
+        "exercices": {"total": len(exercices), "termines": sum(1 for x in exercices if x.get("statut") == "termine")},
+        "ressources": ressources, "resultats": resultats, "verification": verification,
+        "resume": suivi.get("resume"), "calendrier": sorted(calendrier, key=lambda ev: ev["date"]),
+    }
+    return {"page": page}
 
 
 def _etudes_detail_suivi(item: str | None) -> dict[str, Any]:
@@ -309,6 +372,7 @@ ACTIONS: dict[str, Callable[[str | None], dict[str, Any]]] = {
     "etudes_suivis": _etudes_suivis,
     "etudes_echeances": _etudes_echeances,
     "etudes_detail_suivi": _etudes_detail_suivi,
+    "etudes_page_suivi": _etudes_page_suivi,
 }
 
 

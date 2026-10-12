@@ -50,7 +50,7 @@ from src.agents.memory.tools import axon_note
 from src.agents.mermaid.tools import mermaid_diagram
 from src.agents.study.tools import save_study_file
 from src.agents.study.tools_suivi import (
-    etude_creer_suivi, etude_lister_suivis, etude_detail_suivi, etude_archiver_suivi,
+    etude_creer_suivi, etude_lister_suivis, etude_detail_suivi, etude_archiver_suivi, etude_supprimer_suivi,
     etude_associer_ressource, etude_retirer_ressource,
     etude_resultats_recents, etude_rattacher_resultat,
 )
@@ -291,7 +291,7 @@ def build_all_tools() -> List[BaseTool]:
         etude_creer_suivi,
         etude_lister_suivis,
         etude_detail_suivi,
-        etude_archiver_suivi,
+        etude_archiver_suivi, etude_supprimer_suivi,
         etude_associer_ressource,
         etude_retirer_ressource,
         etude_ajouter_echeance,

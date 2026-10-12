@@ -29,7 +29,7 @@ Two directories, deliberately separate:
 | | |
 |---|---|
 | the repo | code, `.env`, `.venv`. Run from an existing clone (`bash install.sh`), it installs **in place**; the one-liner clones into `~/ai-agent`. Override with `AXON_INSTALL_DIR`. |
-| `~/.axon` | Axon's **state** — logs, JSON, semantic index, key-pool health, project memory. The only directory Axon creates in your home. |
+| `~/.axon` | Axon's **state** — logs, JSON, semantic index, key-pool health, project memory. The only directory Axon creates in your home. |''&é
 
 Keeping them apart is what makes a reinstall safe: wiping the repo to start over
 must not take with it what Axon has learned.
@@ -283,6 +283,16 @@ reschedules its reminders at the same offsets, with explicit rules:
 - a reminder that would now fall in the past is disabled, not left on the old date;
 - an old reminder whose offset is unknown is **left as is and reported**, never rescheduled on a guessed value.
 
+**When the computer was off or asleep** — a deadline reminder missed while the
+machine was off is shown at the next start with its real content ("Final
+delivery — in 3 days"), once per deadline; one missed during sleep still goes
+out on wake-up (up to 12 h late) instead of being silently skipped.
+
+**Daily recap** — once a day, from 6:00 (session start or wake-up), a desktop
+notification lists the deadlines of the next 14 days and the state of every Git
+repository linked to an active tracker: branch, age of the last commit,
+uncommitted files. Nothing to report, no notification.
+
 Everything lives in `~/.axon/etudes.json` (atomic writes, schema versioned and
 migrated in place).
 
@@ -431,6 +441,7 @@ If the island is not running, Axon works exactly as before.
 - **Code** — files and unified diffs as they are touched.
 - **Integrations** — one-click Gmail, Jira and Google Calendar dashboards, read-only shortcuts that skip the agent loop.
 - **Études** — drop a document (or pick one) for quick work; create trackers; generate a sheet or exercises per tracker with a live status (*generating* → *open result* / *retry*); add, postpone or cancel deadlines; archive a tracker; reopen recent results. Forms close only once the CLI has confirmed — on failure they keep what you typed and show the error.
+- **Project page** — click a tracker to open its page: deadlines (add one, schedule its reminders with the bell), a month calendar of deadlines, reminders, commits, generated sheets and checks, linked repositories with their live Git state, tasks, the last check. Local data shows instantly; an **AI summary** of the whole project (READMEs, specs, recent commits, tasks, deadlines) streams in token by token, is kept for the next visit, and can be regenerated. One-click AI actions: check progress, propose tasks, take stock.
 
 ```bash
 # Arch: system packages (not pip)

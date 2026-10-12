@@ -246,6 +246,40 @@ def archiver_suivi(suivi_id: str, archive: bool = True) -> Suivi | None:
     return _avec_suivi(suivi_id, _faire)
 
 
+def enregistrer_resume(suivi_id: str, texte: str) -> Suivi | None:
+    """Garde le dernier résumé IA du suivi : la page projet l'affiche tout de
+    suite à la prochaine ouverture, sans repayer un appel LLM."""
+    def _faire(_data, suivi):
+        suivi["resume"] = {"texte": texte, "date": _maintenant()}
+        return suivi
+    return _avec_suivi(suivi_id, _faire)
+
+
+def supprimer_suivi(suivi_id: str) -> Suivi | None:
+    """Supprime définitivement un suivi. Renvoie le suivi supprimé (pour que
+    l'appelant désactive ses rappels cron), ou None s'il n'existe pas.
+
+    Ce qui ne disparaît PAS avec lui : les résultats générés (fichiers dans
+    ~/Documents/axon_fiches) redeviennent du travail rapide non rattaché, et
+    les ressources encore utilisées par un autre suivi restent. Seules les
+    ressources qui ne servaient qu'à lui sont retirées — ce ne sont que des
+    références, aucun fichier du disque n'est touché."""
+    with _LOCK:
+        data = _load()
+        suivi = next((s for s in data["suivis"] if s["id"] == suivi_id), None)
+        if suivi is None:
+            return None
+        data["suivis"] = [s for s in data["suivis"] if s["id"] != suivi_id]
+        for resultat in data["resultats"]:
+            if resultat.get("suivi_id") == suivi_id:
+                resultat["suivi_id"] = None
+        encore_utilisees = {rid for s in data["suivis"] for rid in s["ressources"]}
+        data["ressources"] = [r for r in data["ressources"]
+                              if r["id"] not in suivi["ressources"] or r["id"] in encore_utilisees]
+        _save(data)
+        return suivi
+
+
 def associer_ressource(suivi_id: str, ressource_id: str) -> Suivi | None:
     def _faire(_data, suivi):
         if ressource_id not in suivi["ressources"]:
@@ -420,6 +454,21 @@ def ajouter_rappel_echeance(
         echeance["rappels"].append(rappel)
         return rappel
     return _avec_suivi(suivi_id, _faire)
+
+
+def trouver_rappel(cron_id: str) -> tuple[Suivi, Echeance | None, Rappel] | None:
+    """Le rappel d'études qui correspond à une tâche cron — le daemon ne
+    connaît que l'id de sa tâche. Échéance à None pour un rappel de point
+    d'avancement (attaché au suivi, pas à une date)."""
+    for suivi in _load()["suivis"]:
+        for rappel in suivi["rappels"]:
+            if rappel["cron_id"] == cron_id:
+                return suivi, None, rappel
+        for echeance in suivi["echeances"]:
+            for rappel in echeance["rappels"]:
+                if rappel["cron_id"] == cron_id:
+                    return suivi, echeance, rappel
+    return None
 
 
 def retirer_rappel_echeance(suivi_id: str, echeance_id: str, cron_id: str) -> bool:

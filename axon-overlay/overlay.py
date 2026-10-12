@@ -305,7 +305,8 @@ class Overlay(Gtk.Application):
             self.definir_mode(message.get("mode", "accueil"))
         elif genre in ("commande", "reponse_demande", "decision", "demander_commandes", "raccourci",
                        "joindre", "detacher", "demander_picker", "creer_suivi",
-                       "creer_echeance", "maj_echeance", "archiver_suivi"):
+                       "creer_echeance", "maj_echeance", "archiver_suivi", "lier_ressource", "supprimer_suivi",
+                       "demander_flux", "planifier_rappels"):
             if not self.pont.envoyer(message):
                 self.depuis_axon({"type": "connexion", "connecte": False})
                 self.depuis_axon({"type": "etat", "etat": "erreur", "texte": "Axon n’est pas connecté"})

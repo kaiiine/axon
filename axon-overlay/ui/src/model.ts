@@ -1,9 +1,9 @@
 import { get, writable } from 'svelte/store';
 import { entrance, finishEntrance } from './entrance';
 import { isNative, post } from './bridge';
-import type { AgentState, Model, Request, View } from './types';
+import type { AgentState, Model, PageSuivi, Request, View } from './types';
 import { INTEGRATIONS } from './integrations';
-const fresh = (): Model => ({ view:'home', state:'idle', connected:false, visible:true, demo:false, detail:'', draft:'', messages:[], activity:[], requests:[], commands:[], file:null, busy:false, motion:true, sound:false, notice:'', unread:0, integration:null, integrationData:{}, attachments:[], dragActif:false, creationSuivi:null, actionEtudes:null });
+const fresh = (): Model => ({ view:'home', state:'idle', connected:false, visible:true, demo:false, detail:'', draft:'', messages:[], activity:[], requests:[], commands:[], file:null, busy:false, motion:true, sound:false, notice:'', unread:0, integration:null, integrationData:{}, attachments:[], dragActif:false, creationSuivi:null, actionEtudes:null, pageSuivi:null, flux:{} });
 export const model = writable<Model>(fresh());
 let serial=0, unlock: ReturnType<typeof setTimeout> | undefined, realTraffic=false;
 const txt=(v:unknown):string=>v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -111,6 +111,72 @@ export function majEcheance(suiviId:string,echeanceId:string,champs:{date?:strin
   post({type:'maj_echeance',id,suivi_id:suiviId,echeance_id:echeanceId,...champs});
   return id;
 }
+//: Le sélecteur s'ouvre côté CLI (zenity/kdialog), comme pour `/attach` :
+//: l'île ne fait que demander, puis reçoit la confirmation pour cet id.
+export function lierRessource(suiviId:string,mode:'fichier'|'dossier'):string|undefined{
+  if(!get(model).connected||get(model).demo)return undefined;
+  const id=nouvelleActionEtudes();
+  post({type:'lier_ressource',id,suivi_id:suiviId,mode});
+  return id;
+}
+export function supprimerSuivi(suiviId:string):string|undefined{
+  if(!get(model).connected||get(model).demo)return undefined;
+  const id=nouvelleActionEtudes();
+  post({type:'supprimer_suivi',id,suivi_id:suiviId});
+  return id;
+}
+export function planifierRappels(suiviId:string,echeanceId:string):string|undefined{
+  if(!get(model).connected||get(model).demo)return undefined;
+  const id=nouvelleActionEtudes();
+  post({type:'planifier_rappels',id,suivi_id:suiviId,echeance_id:echeanceId});
+  return id;
+}
+//: Page projet : les données locales arrivent par un raccourci (rapide, sans
+//: LLM) ; le résumé IA arrive à part, en flux (`demanderFlux`). Les données
+//: déjà affichées restent pendant une actualisation.
+export function ouvrirSuivi(suiviId:string){
+  navigate('suivi');
+  model.update(s=>({...s,pageSuivi:{id:suiviId,statut:'loading',donnees:s.pageSuivi?.id===suiviId?s.pageSuivi.donnees:undefined}}));
+  demanderPageSuivi(suiviId);
+}
+export function actualiserPageSuivi(){
+  const page=get(model).pageSuivi;
+  if(page)demanderPageSuivi(page.id);
+}
+function demanderPageSuivi(suiviId:string){
+  if(!get(model).connected||get(model).demo)return;
+  post({type:'raccourci',id:String(++serial),action:'etudes_page_suivi',item:suiviId});
+  setTimeout(()=>{
+    const page=get(model).pageSuivi;
+    if(page?.id===suiviId&&page.statut==='loading'&&!page.donnees)
+      model.update(s=>({...s,pageSuivi:{id:suiviId,statut:'error',message:MESSAGE_SANS_REPONSE}}));
+  },DELAI_RACCOURCI_MS);
+}
+//: Un appel LLM peut mettre plusieurs secondes à rendre son premier mot :
+//: délai plus long qu'un raccourci avant de conclure qu'Axon ne répond pas.
+const DELAI_PREMIER_MORCEAU_MS=90000;
+//: Le flux le plus récent demandé pour (genre, cible) — c'est le store qui
+//: garde ce lien, pas le composant : un id rangé dans une variable locale
+//: depuis un bloc réactif n'était jamais relu par Svelte.
+export function dernierFlux(flux:Model['flux'],genre:string,cible:string){
+  let dernier:{id:string;flux:Model['flux'][string]}|undefined;
+  for(const [id,f] of Object.entries(flux)){
+    if(f.genre===genre&&f.cible===cible&&(!dernier||Number(id)>Number(dernier.id)))dernier={id,flux:f};
+  }
+  return dernier?.flux;
+}
+export function demanderFlux(genre:string,cible:string):string|undefined{
+  if(!get(model).connected||get(model).demo)return undefined;
+  const id=String(++serial);
+  model.update(s=>({...s,flux:{...s.flux,[id]:{genre,cible,texte:'',statut:'en_cours'}}}));
+  post({type:'demander_flux',id,genre,cible});
+  setTimeout(()=>{
+    const flux=get(model).flux[id];
+    if(flux?.statut==='en_cours'&&!flux.texte)
+      model.update(s=>({...s,flux:{...s.flux,[id]:{...flux,statut:'erreur',message:MESSAGE_SANS_REPONSE}}}));
+  },DELAI_PREMIER_MORCEAU_MS);
+  return id;
+}
 export function archiverSuivi(suiviId:string):string|undefined{
   if(!get(model).connected||get(model).demo)return undefined;
   const id=nouvelleActionEtudes();
@@ -151,12 +217,15 @@ function handle(m:Record<string,unknown>){
         const actionEtudes=!connected&&s.actionEtudes?.statut==='en_cours'
           ?{...s.actionEtudes,statut:'erreur' as const,message:'Connexion à Axon perdue pendant l’action.'}
           :s.actionEtudes;
-        return {...s,connected,requests:connected?s.requests:[],integrationData:connected?s.integrationData:{},attachments:connected?s.attachments:[],dragActif:false,busy:false,state:connected?'idle':'sleeping',notice:'',creationSuivi,actionEtudes};
+        const flux:typeof s.flux={};
+        for(const [id,f] of Object.entries(s.flux))flux[id]=!connected&&f.statut==='en_cours'?{...f,statut:'erreur',message:'Connexion à Axon perdue.'}:f;
+        return {...s,flux,connected,requests:connected?s.requests:[],integrationData:connected?s.integrationData:{},attachments:connected?s.attachments:[],dragActif:false,busy:false,state:connected?'idle':'sleeping',notice:'',creationSuivi,actionEtudes};
       });
       clearTimeout(unlock);
       if(connected&&!get(model).demo){
         post({type:'demander_commandes'});
         panneauxOuverts.forEach(action=>demanderRaccourci(action));
+        if(get(model).view==='suivi')actualiserPageSuivi();
       }
       break;
     }
@@ -188,6 +257,11 @@ function handle(m:Record<string,unknown>){
     case 'raccourci_resultat': {
       const action=txt(m.action);
       if(!action)break;
+      if(action==='etudes_page_suivi'){
+        const page=get(model).pageSuivi;
+        if(page&&page.id===txt(m.item)&&object(m.page))model.update(s=>({...s,pageSuivi:{id:page.id,statut:'ok',donnees:m.page as unknown as PageSuivi}}));
+        break;
+      }
       if(m.panel!==undefined&&m.item!==undefined){
         const panel=txt(m.panel),item=txt(m.item),texte=txt(m.text);
         model.update(s=>{
@@ -206,6 +280,11 @@ function handle(m:Record<string,unknown>){
     case 'raccourci_erreur': {
       const action=txt(m.action);
       if(!action)break;
+      if(action==='etudes_page_suivi'){
+        const page=get(model).pageSuivi;
+        if(page&&page.id===txt(m.item))model.update(s=>({...s,pageSuivi:{...page,statut:'error',message:txt(m.message)||'Échec du chargement.'}}));
+        break;
+      }
       if(m.panel!==undefined&&m.item!==undefined){
         const panel=txt(m.panel),item=txt(m.item),message=txt(m.message)||'Échec.';
         model.update(s=>{
@@ -232,11 +311,28 @@ function handle(m:Record<string,unknown>){
     case 'etudes_action_resultat': {
       if(typeof m.id!=='string')break;
       model.update(s=>({...s,actionEtudes:{id:m.id as string,statut:'ok'}}));
+      // Une échéance créée ou reportée depuis la page projet doit s'y voir.
+      if(get(model).view==='suivi')actualiserPageSuivi();
       break;
     }
     case 'etudes_action_erreur': {
       if(typeof m.id!=='string')break;
       model.update(s=>({...s,actionEtudes:{id:m.id as string,statut:'erreur',message:txt(m.message)||'Échec.'}}));
+      break;
+    }
+    case 'flux_morceau': {
+      const id=txt(m.id),flux=get(model).flux[id];
+      if(!flux)break;
+      model.update(s=>({...s,flux:{...s.flux,[id]:{...flux,texte:flux.texte+txt(m.texte)}}}));
+      break;
+    }
+    case 'flux_fin': case 'flux_erreur': {
+      const id=txt(m.id),flux=get(model).flux[id];
+      if(!flux)break;
+      const fin=m.type==='flux_fin'?{statut:'fini' as const}:{statut:'erreur' as const,message:txt(m.message)||'Échec.'};
+      model.update(s=>({...s,flux:{...s.flux,[id]:{...flux,...fin}}}));
+      // Le résumé terminé est enregistré côté CLI : la page le reprend.
+      if(m.type==='flux_fin'&&get(model).view==='suivi')actualiserPageSuivi();
       break;
     }
     case 'pieces_jointes': {

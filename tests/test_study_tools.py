@@ -239,3 +239,74 @@ def test_un_offset_inconnu_n_est_jamais_invente_mais_signale(etude):
     assert len(rappels) == 1
     assert rappels[0]["cron_id"] == cron_id
     assert rappels[0]["offset_jours"] is None
+
+
+def test_type_ressource_pour_chemin(tmp_path):
+    from src.agents.study._aide import type_ressource_pour_chemin
+    depot = tmp_path / "depot"; (depot / ".git").mkdir(parents=True)
+    dossier = tmp_path / "cours"; dossier.mkdir()
+    fichier = tmp_path / "sujet.pdf"; fichier.write_text("x")
+
+    assert type_ressource_pour_chemin(str(depot)) == "depot_git"
+    assert type_ressource_pour_chemin(str(dossier)) == "dossier"
+    assert type_ressource_pour_chemin(str(fichier)) == "document"
+
+
+def _depot(chemin):
+    (chemin / ".git").mkdir(parents=True)
+    return chemin
+
+
+def test_un_dossier_front_back_cree_un_projet_et_lie_chaque_depot(etude, tmp_path):
+    """Le dossier parent n'est pas un dépôt, mais ses deux sous-dossiers le
+    sont : les deux dépôts doivent être liés, et le suivi est un projet."""
+    from src.agents.study.store import obtenir_ressource, obtenir_suivi
+    from src.agents.study.tools_suivi import lier_chemin_local
+    projet = tmp_path / "conseil-des-sages"
+    _depot(projet / "be-cds"); _depot(projet / "fe-cds")
+
+    suivi_id, erreur = lier_chemin_local("", str(projet))
+
+    assert erreur is None
+    suivi = obtenir_suivi(suivi_id)
+    assert (suivi["titre"], suivi["type"]) == ("conseil-des-sages", "projet")
+    liees = sorted((r["type"], r["nom"]) for r in map(obtenir_ressource, suivi["ressources"]))
+    assert liees == [("depot_git", "be-cds"), ("depot_git", "fe-cds"), ("dossier", "conseil-des-sages")]
+
+
+def test_relier_le_meme_dossier_ne_cree_pas_de_doublon(etude, tmp_path):
+    from src.agents.study.store import obtenir_suivi
+    from src.agents.study.tools_suivi import lier_chemin_local
+    projet = tmp_path / "projet"
+    _depot(projet / "back")
+
+    suivi_id, _ = lier_chemin_local("", str(projet))
+    lier_chemin_local(suivi_id, str(projet))
+
+    assert len(obtenir_suivi(suivi_id)["ressources"]) == 2
+
+
+def test_un_simple_dossier_sans_depot_reste_un_suivi_autre(etude, tmp_path):
+    from src.agents.study.store import obtenir_suivi
+    from src.agents.study.tools_suivi import lier_chemin_local
+    cours = tmp_path / "cours"; cours.mkdir()
+
+    suivi_id, _ = lier_chemin_local("", str(cours))
+
+    assert obtenir_suivi(suivi_id)["type"] == "autre"
+
+
+def test_supprimer_un_suivi_desactive_ses_rappels(etude):
+    """Sans ça, un suivi supprimé continuerait d'envoyer des notifications."""
+    from src.agents.cron.store import get_tasks
+    sid = _iv(etude.etude_creer_suivi, titre="be-cds", type="projet").split("`")[1]
+    dans_30j = (date.today() + timedelta(days=30)).isoformat()
+    eid = _iv(etude.etude_ajouter_echeance, suivi_id=sid, titre="Rendu", type="rendu_projet",
+              date=dans_30j).split("`")[1]
+    _iv(etude.etude_planifier_rappel_echeance, suivi_id=sid, echeance_id=eid, offsets_jours=[7, 3])
+    assert sum(t["active"] for t in get_tasks()) == 2
+
+    confirmation = _iv(etude.etude_supprimer_suivi, suivi_id=sid)
+
+    assert "supprimé" in confirmation and "2 rappel" in confirmation
+    assert sum(t["active"] for t in get_tasks()) == 0

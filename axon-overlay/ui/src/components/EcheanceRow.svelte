@@ -1,5 +1,5 @@
 <script lang="ts">
- import {model,majEcheance} from '../model';
+ import {model,majEcheance,planifierRappels} from '../model';
  import Icon from './Icon.svelte';
  //: Pas une variante de Row.svelte (integrations/Row.svelte) : celui-là
  //: déplie un DÉTAIL markdown en lecture seule (Gmail, Jira…) ; une échéance
@@ -11,6 +11,10 @@
  export let tag:string|undefined=undefined;
  export let suiviId:string;
  export let echeanceId:string;
+ //: Nombre de rappels déjà programmés. La cloche n'apparaît qu'à 0 : la
+ //: reprogrammer en créerait d'autres par-dessus. Inconnu (undefined), pas
+ //: de cloche non plus.
+ export let rappels:number|undefined=undefined;
 
  let reportOuvert=false;
  let nouvelleDate='';
@@ -35,6 +39,11 @@
   erreur='';
   idEnAttente=majEcheance(suiviId,echeanceId,{date:nouvelleDate})??null;
  }
+ function programmerRappels(){
+  if(enAttente)return;
+  erreur='';
+  idEnAttente=planifierRappels(suiviId,echeanceId)??null;
+ }
  function annuler(){
   if(enAttente)return;
   erreur='';
@@ -46,6 +55,7 @@
   <div class="text"><b>{title}</b><span>{meta}</span></div>
   {#if tag}<i>{tag}</i>{/if}
   <div class="actions">
+   {#if rappels===0}<button class="row-action" disabled={enAttente} title="Rappels 7, 3 et 1 jours avant" aria-label="Programmer les rappels" onclick={programmerRappels}><Icon name="bell"/></button>{/if}
    <button class="row-action" class:active={reportOuvert} disabled={enAttente} title="Reporter" aria-label="Reporter" onclick={basculerReport}><Icon name="chevron"/></button>
    <button class="row-action" disabled={enAttente} title="Annuler l’échéance" aria-label="Annuler l’échéance" onclick={annuler}><Icon name="close"/></button>
   </div>
@@ -59,7 +69,7 @@
  {#if erreur}<p class="erreur">{erreur}</p>{/if}
 </div>
 <style>
- .echeance{padding:9px 11px;background:#ffffff05;border:1px solid #ffffff08;border-top-color:#ffffff14;border-radius:10px;backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);transition:background 150ms,border-color 150ms}
+ .echeance{padding:9px 11px;background:#ffffff05;border:1px solid #ffffff08;border-top-color:#ffffff14;border-radius:10px;transition:background 150ms,border-color 150ms}
  .echeance:hover{background:#ffffff09;border-color:#ffffff20}
  .content{display:flex;align-items:center;gap:8px;width:100%}
  .text{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
@@ -67,7 +77,7 @@
  .text span{font-size:9px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
  .echeance i{font-style:normal;font-size:8px;font-weight:600;padding:3px 7px;border-radius:20px;background:#ffffff08;color:#b0b2bc;flex:none}
  .actions{display:flex;gap:4px;flex:none;max-width:0;overflow:hidden;opacity:0;transform:translateX(-2px);transition:opacity 150ms,transform 150ms,max-width 150ms}
- .echeance:hover .actions,.actions:focus-within{max-width:80px;opacity:1;transform:translateX(0)}
+ .echeance:hover .actions,.actions:focus-within{max-width:110px;opacity:1;transform:translateX(0)}
  .row-action.active{opacity:1}
  .row-action{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;border:1px solid #ffaf0024;background:#ffaf0009;color:#dfb86e;flex:none;transition:transform 150ms var(--spring),background 150ms,border-color 150ms,color 150ms}
  .row-action:hover:not(:disabled){background:#ffaf0014;border-color:#ffaf0040;color:#f0cf93;transform:translateY(-1px)}
