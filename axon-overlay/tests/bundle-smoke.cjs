@@ -1,0 +1,10 @@
+const {JSDOM,VirtualConsole}=require('jsdom');
+const path=require('node:path');
+const {pathToFileURL}=require('node:url');
+const fs=require('node:fs');
+const errors=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>{if(e.type!=='css-parsing')errors.push(e)});
+let finish;const ready=new Promise(resolve=>finish=resolve);
+const file=path.resolve('ui/index.html');
+const dom=new JSDOM(fs.readFileSync(file,'utf8'),{url:pathToFileURL(file).href,runScripts:'dangerously',resources:'usable',pretendToBeVisual:true,virtualConsole:vc,beforeParse(w){w.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});w.HTMLImageElement.prototype.decode=()=>Promise.resolve();w.webkit={messageHandlers:{axon:{postMessage:m=>{if(m.type==='pret')finish()}}}};}});
+const timeout=setTimeout(()=>{console.error('Le build n’a pas envoyé pret.',errors);dom.window.close();process.exitCode=1},5000);
+ready.then(()=>{clearTimeout(timeout);if(errors.length)throw errors[0];if(!dom.window.axon||dom.window.document.querySelectorAll('[data-mascot] img').length!==12)throw Error('Build incomplet');console.log('OK bundle IIFE chargé depuis file://, 12 images persistantes et signal pret.');dom.window.close();}).catch(e=>{console.error(e);dom.window.close();process.exitCode=1});

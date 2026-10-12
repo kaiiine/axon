@@ -283,7 +283,21 @@ def get_clipboard_image():
 
 
 def open_file_picker() -> Optional[str]:
-    """Ouvre un sélecteur de fichier natif. Retourne le chemin ou None."""
+    """Ouvre un sélecteur de fichier natif. Retourne le chemin ou None.
+
+    L'île (couche layer-shell TOP) passerait au-dessus du dialogue : elle est
+    priée de s'effacer le temps du choix, puis de revenir. Sans île lancée,
+    `pont.envoyer` échoue vite et en silence."""
+    from .pont_overlay import pont
+
+    pont.envoyer(type="selecteur_fichier", ouvert=True)
+    try:
+        return _ouvrir_selecteur_natif()
+    finally:
+        pont.envoyer(type="selecteur_fichier", ouvert=False)
+
+
+def _ouvrir_selecteur_natif() -> Optional[str]:
     import subprocess
 
     # zenity (GNOME / Wayland)

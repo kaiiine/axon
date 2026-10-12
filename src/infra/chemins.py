@@ -87,6 +87,16 @@ def crons() -> Path:
     return etat("crons.json")
 
 
+def etudes() -> Path:
+    """Échéances (devoirs/partiels/rendus), avec leur fiche de suivi imbriquée."""
+    return etat("etudes.json")
+
+
+def traces_routage_outils() -> Path:
+    """Journal JSONL des appels d'outils — `src/utils/write_file.py`."""
+    return etat("tools_routing.jsonl")
+
+
 def journaux_cron() -> Path:
     return etat("cron_logs")
 

@@ -1,4 +1,10 @@
-"""Study tools — save generated HTML revision sheets and exercises to disk."""
+"""Study tools — save generated HTML revision sheets and exercises to disk.
+
+Les outils `etude_*` (suivis, échéances, exercices, rappels, vérification)
+vivent dans `tools_suivi.py`, `tools_echeance.py`, `tools_progression.py` et
+`tools_verification.py` — ce fichier ne garde que son périmètre d'origine :
+la génération elle-même, via le skill fiche/exo.
+"""
 from __future__ import annotations
 
 import re
@@ -82,6 +88,7 @@ def save_study_file(
     filename: str = "",
     pdf_path: str = "",
     html: str = "",
+    suivi_id: str = "",
 ) -> dict:
     """
     Generates a well-designed HTML study file (revision sheet or interactive
@@ -108,6 +115,12 @@ def save_study_file(
         filename:  optional base name without extension (e.g. "algo_tri")
         pdf_path:  absolute path to a PDF file (when too large to inject in context)
         html:      complete HTML document — bypasses the template, use only on purpose
+        suivi_id:  if this generation belongs to an existing suivi (see
+                   etude_detail_suivi), pass its id so the result is attached
+                   there and shows up in etude_resultats_recents for that
+                   suivi — otherwise it's saved as unattached quick work,
+                   findable via etude_resultats_recents and attachable later
+                   with etude_rattacher_resultat.
     Returns:
         {"status": "ok", "path": str}
         {"status": "error", "error": str}
@@ -145,6 +158,16 @@ def save_study_file(
         return {"status": "error", "error": str(e)}
 
     _open_browser(out)
+
+    try:
+        from .store import ajouter_ressource, ajouter_resultat
+        sources = [Path(pdf_path).name] if pdf_path else []
+        ressource_ids = [ajouter_ressource("document", nom, "copie", nom)["id"] for nom in sources]
+        ajouter_resultat(file_type if file_type in ("fiche", "exo") else "fiche", out.name,
+                          ressources_utilisees=ressource_ids, suivi_id=suivi_id or None)
+    except Exception:
+        pass  # le fichier est bien sauvé — un échec de suivi ne doit jamais faire échouer la génération
+
     return {
         "status": "ok",
         "path": str(out),

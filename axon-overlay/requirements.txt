@@ -1,0 +1,18 @@
+# axon-overlay — dépendances
+#
+# Deux mondes distincts, volontairement séparés :
+#
+# 1. `pont_axon.py` (copié DANS src/ d'Axon, tourne dans le venv principal)
+#    N'utilise QUE la bibliothèque standard (json, os, queue, socket, threading,
+#    uuid) : zéro entrée à ajouter au requirements.txt principal du dépôt.
+#
+# 2. `overlay.py` (processus GTK4 séparé, lancé par lancer.sh via `python3`
+#    système — PAS le venv) a besoin de bindings système, introuvables sur
+#    PyPI sous une forme fiable : installer "PyGObject" via pip tenterait de
+#    compiler contre les libs GTK du système et casserait plus souvent qu'il
+#    ne marcherait. La voie correcte sur Arch est pacman :
+#
+#        sudo pacman -S python-gobject gtk4 gtk4-layer-shell webkitgtk-6.0
+#
+#    Ce fichier existe pour que la dépendance soit DÉCOUVRABLE (comme un
+#    requirements.txt), pas pour être passé à `pip install -r`.

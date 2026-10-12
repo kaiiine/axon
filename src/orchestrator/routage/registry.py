@@ -49,6 +49,21 @@ from src.agents.arxiv.tools import arxiv_search, arxiv_get_paper
 from src.agents.memory.tools import axon_note
 from src.agents.mermaid.tools import mermaid_diagram
 from src.agents.study.tools import save_study_file
+from src.agents.study.tools_suivi import (
+    etude_creer_suivi, etude_lister_suivis, etude_detail_suivi, etude_archiver_suivi,
+    etude_associer_ressource, etude_retirer_ressource,
+    etude_resultats_recents, etude_rattacher_resultat,
+)
+from src.agents.study.tools_echeance import (
+    etude_ajouter_echeance, etude_lister_echeances, etude_maj_echeance,
+    etude_planifier_rappel_echeance, etude_planifier_point_avancement, etude_gerer_rappel,
+)
+from src.agents.study.tools_progression import (
+    etude_ajouter_exercice, etude_maj_exercice,
+    etude_ajouter_tache, etude_maj_tache,
+    etude_point_avancement,
+)
+from src.agents.study.tools_verification import etude_contexte_verification, etude_enregistrer_verification
 from src.agents.jira.tools import (
     jira_get_my_issues, jira_get_issue, jira_search_issues,
     jira_get_project_summary, jira_get_sprint_issues,
@@ -273,6 +288,27 @@ def build_all_tools() -> List[BaseTool]:
         mermaid_diagram,
         # === ÉTUDE ===
         save_study_file,
+        etude_creer_suivi,
+        etude_lister_suivis,
+        etude_detail_suivi,
+        etude_archiver_suivi,
+        etude_associer_ressource,
+        etude_retirer_ressource,
+        etude_ajouter_echeance,
+        etude_lister_echeances,
+        etude_maj_echeance,
+        etude_ajouter_exercice,
+        etude_maj_exercice,
+        etude_ajouter_tache,
+        etude_maj_tache,
+        etude_point_avancement,
+        etude_planifier_rappel_echeance,
+        etude_planifier_point_avancement,
+        etude_gerer_rappel,
+        etude_resultats_recents,
+        etude_rattacher_resultat,
+        etude_contexte_verification,
+        etude_enregistrer_verification,
         # === CRON JOBS ===
         schedule_task,
         surveiller,

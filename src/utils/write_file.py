@@ -3,14 +3,14 @@
 from __future__ import annotations
 import uuid
 from typing import TypedDict, List, Dict
-from pathlib import Path
 import json
 from datetime import datetime, timezone
+from src.infra import chemins as _chemins
 from src.orchestrator.commun.messages import texte_du_contenu
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 
-FILE = Path.home() / ".axon" / "tools_routing.jsonl"
+FILE = _chemins.traces_routage_outils()
 
 # ── Typing ───────────────────────────────────────────────────────────
 

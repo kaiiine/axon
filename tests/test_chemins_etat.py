@@ -79,7 +79,7 @@ def test_rien_nest_cree_a_la_lecture(monkeypatch, tmp_path):
 @pytest.mark.parametrize("accesseur", [
     "base_memoire", "dernier_thread", "echecs_backend", "pool_de_cles",
     "index_outils", "pid_cron", "mesures", "crons", "journaux_cron",
-    "historique_saisie", "memoire_projet",
+    "historique_saisie", "memoire_projet", "etudes",
 ])
 def test_chaque_accesseur_reste_sous_la_racine(accesseur, monkeypatch, tmp_path):
     monkeypatch.setenv("AXON_STATE_DIR", str(tmp_path))

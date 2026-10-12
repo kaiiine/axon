@@ -1,0 +1,33 @@
+export type View = 'home' | 'chat' | 'code' | 'settings' | 'integrations' | 'etudes';
+export type AgentState = 'idle' | 'thinking' | 'working' | 'waiting' | 'finished' | 'sleeping' | 'error';
+export interface Question { texte: string; choix: string[]; affirmatif?: string; libre?: boolean }
+export interface Request { id: string | number; genre: string; apercu: string; questions: Question[]; answers: string[]; legacy?: boolean; freeform?: boolean }
+export interface Message { id: number; who: 'axon' | 'toi' | 'outil'; text: string; detail?: string }
+export interface Activity { id: number; name: string; detail: string }
+export interface FileContent { path: string; content: string; diff: boolean; start: number }
+export interface Command { cmd: string; desc: string }
+export interface IntegrationStat { label: string; value: string; accent?: boolean }
+//: `generationFiche*`/`generationExo*` sont spécifiques à Études (§1, lot 3)
+//: mais vivent sur le type partagé plutôt qu'une variante : optionnels, donc
+//: sans effet pour Gmail/Jira/Calendar qui ne les remplissent jamais.
+export type StatutGeneration = 'en_cours' | 'terminee' | 'echouee';
+export interface IntegrationRow { title: string; meta: string; tag?: string; accent?: boolean; id?: string; detail?: string; detailStatus?: 'loading' | 'ok' | 'error'; generationFicheStatut?: StatutGeneration; generationFicheFichier?: string; generationExoStatut?: StatutGeneration; generationExoFichier?: string; suiviId?: string }
+export interface IntegrationData { status: 'loading' | 'ok' | 'error'; stats?: IntegrationStat[]; rows?: IntegrationRow[]; message?: string; generationFicheStatut?: StatutGeneration; generationFicheFichier?: string; generationExoStatut?: StatutGeneration; generationExoFichier?: string }
+//: Une pièce jointe en attente, côté île — miroir de `Attachment`
+//: (src/ui/attachments.py), pas son contenu complet (jamais envoyé sur le
+//: socket, seulement le nécessaire pour l'afficher).
+export interface AttachmentItem { nom: string; statut: 'chargement' | 'ok' | 'erreur'; message?: string; estImage: boolean; taille: string }
+export type Outbound = { type: 'commande'; texte: string } | { type: 'reponse_demande'; id: string | number; reponses: string[] } | { type: 'decision'; id: string | number; accord: boolean } | { type: 'demander_commandes' } | { type: 'mode'; mode: 'accueil' | 'detail' } | { type: 'ouvrir'; ouvert: boolean } | { type: 'pret' } | { type: 'raccourci'; id: string; action: string; item?: string; panel?: string } | { type: 'joindre'; chemin: string } | { type: 'detacher'; nom: string } | { type: 'demander_picker' } | { type: 'creer_suivi'; id: string; titre: string; type_suivi: string; matiere?: string } | { type: 'creer_echeance'; id: string; suivi_id: string; titre: string; type_echeance: string; date: string } | { type: 'maj_echeance'; id: string; suivi_id: string; echeance_id: string; date?: string; statut?: string } | { type: 'archiver_suivi'; id: string; suivi_id: string };
+//: Réponse à UNE soumission du formulaire de création de suivi, identifiée
+//: par `id` (§2, lot 3) — jamais "le dernier suivi créé", pour qu'une
+//: réponse tardive ne vienne pas clore un formulaire déjà réutilisé pour
+//: une autre création.
+export interface CreationSuivi { id: string; statut: 'en_cours' | 'ok' | 'erreur'; message?: string }
+//: Même principe pour les actions d'échéance (créer/reporter/annuler) et
+//: d'archivage de suivi (§3, lot 3) — UN slot partagé entre ces trois
+//: actions plutôt qu'un par action : elles ont toutes la même forme
+//: (ok, ou erreur avec message) et ne sont jamais deux en vol en même
+//: temps pour un même composant.
+export interface ActionEtudes { id: string; statut: 'en_cours' | 'ok' | 'erreur'; message?: string }
+export interface Model { view: View; state: AgentState; connected: boolean; visible: boolean; demo: boolean; detail: string; draft: string; messages: Message[]; activity: Activity[]; requests: Request[]; commands: Command[]; file: FileContent | null; busy: boolean; motion: boolean; sound: boolean; notice: string; unread: number; integration: string | null; integrationData: Record<string, IntegrationData>; attachments: AttachmentItem[]; dragActif: boolean; creationSuivi: CreationSuivi | null; actionEtudes: ActionEtudes | null }
+declare global { interface Window { __axonAssets?:Record<string,string>; __axonPreview?:boolean; axon?: { recevoir: (message: unknown) => void; ouvrir: (open: boolean) => void; apercu: () => void; entree: () => void; rejouer: () => void }; webkit?: { messageHandlers?: { axon?: { postMessage: (message: Outbound) => void } } } } }

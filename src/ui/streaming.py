@@ -1,6 +1,7 @@
 import re
 import subprocess
 import os
+import queue
 import threading
 from pathlib import Path
 from time import perf_counter
@@ -16,6 +17,7 @@ from rich.console import Console
 
 from .config import fmt_ms, SessionConfig
 from .saisie import _prompt_tokens, _session
+from .pont_overlay import pont
 from .language import detect_lang, enforce_lang_output
 from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT, _BOX
 from src.agents.coding.noeud import RAPPORT
@@ -153,18 +155,77 @@ def _demande_du_graphe(graph, config):
     return None
 
 
-def _build_pdf_content(attachments) -> str:
-    """Assemble le contenu textuel des pièces jointes pour /fiche et /exo.
-    Utilise le contenu brut complet (pas la version tronquée à 25k de l'orchestrateur)."""
-    from .attachments import _extract_pdf
-    parts = []
+def _lire_ressource_document(ressource: dict) -> tuple[str, bool]:
+    """Lit le contenu texte d'une ressource "document" depuis son chemin —
+    réutilise les mêmes extracteurs que /attach (`attachments.py`), pas une
+    seconde logique d'extraction qui pourrait diverger."""
+    from .attachments import _extract_pdf, EXTRACTEURS_OFFICE
+
+    chemin = Path(ressource["chemin"])
+    if not chemin.exists():
+        return "", False
+    suffixe = chemin.suffix.lower()
+    try:
+        if suffixe == ".pdf":
+            content = _extract_pdf(chemin)
+        elif suffixe in EXTRACTEURS_OFFICE:
+            content = EXTRACTEURS_OFFICE[suffixe](chemin)
+        else:
+            content = chemin.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return "", False
+    return content, not content.lstrip().lower().startswith("[erreur")
+
+
+def _ressources_documents_du_suivi(suivi_id: str | None) -> list[dict]:
+    """Les ressources "document" d'un suivi — pour que /fiche et /exo lancés
+    depuis un suivi utilisent directement ses cours, sans re-/attach."""
+    if not suivi_id:
+        return []
+    from src.agents.study.store import obtenir_suivi, obtenir_ressource
+
+    suivi = obtenir_suivi(suivi_id)
+    if suivi is None:
+        return []
+    ressources = (obtenir_ressource(rid) for rid in suivi["ressources"])
+    return [r for r in ressources if r is not None and r["type"] == "document"]
+
+
+def _build_pdf_content(attachments, ressources: list[dict] | None = None) -> tuple[str, list[str], list[str]]:
+    """Assemble le contenu textuel des sources (pièces jointes + ressources
+    "document" d'un suivi) pour /fiche et /exo. Renvoie (contenu,
+    noms_utilises, noms_manquants) — jamais une concaténation aveugle : une
+    source illisible est signalée, pas juste absorbée en silence (§6).
+    Utilise le contenu brut complet (pas la version tronquée à 25k de
+    l'orchestrateur)."""
+    parts: list[str] = []
+    utilises: list[str] = []
+    manquants: list[str] = []
+
     for a in attachments:
         if a.is_image:
             continue
-        # Re-extract at full size if this is a PDF attachment stored with a path hint
         content = a.content or ""
+        if content.lstrip().lower().startswith("[erreur"):
+            manquants.append(a.name)
+            continue
         parts.append(f"=== {a.name} ===\n{content}")
-    return "\n\n".join(parts) if parts else ""
+        utilises.append(a.name)
+
+    for r in ressources or []:
+        content, ok = _lire_ressource_document(r)
+        if not ok:
+            manquants.append(r["nom"])
+            try:
+                from src.agents.study.store import marquer_ressource
+                marquer_ressource(r["id"], False, "fichier introuvable ou illisible à la génération")
+            except Exception:
+                pass
+            continue
+        parts.append(f"=== {r['nom']} ===\n{content}")
+        utilises.append(r["nom"])
+
+    return ("\n\n".join(parts) if parts else "", utilises, manquants)
 
 
 def _save_html_output(content: str, prefix: str, slug: str = "") -> Path:
@@ -186,31 +247,99 @@ def _save_html_output(content: str, prefix: str, slug: str = "") -> Path:
     return out
 
 
-def _pdf_slug(attachments) -> str:
-    """Génère un slug lisible depuis les noms de fichiers joints."""
+def _pdf_slug(noms: list[str]) -> str:
+    """Génère un slug lisible depuis les noms de sources utilisées."""
     import re as _re
-    names = [a.name for a in attachments if not a.is_image]
-    if not names:
+    if not noms:
         from datetime import datetime
         return datetime.now().strftime("%Y%m%d_%H%M")
-    # Prend le premier nom, retire l'extension, nettoie
-    raw = Path(names[0]).stem
+    raw = Path(noms[0]).stem
     slug = _re.sub(r"[^a-zA-Z0-9À-ÿ]+", "-", raw).strip("-")[:50].lower()
     return slug or "fiche"
 
 
-def _handle_fiche(graph, state: dict, cfg: "SessionConfig") -> None:
-    if not _attachments:
-        console.print(command_panel("joint d'abord tes PDF avec /attach, puis relance /fiche", error=True))
+def _enregistrer_resultat(type_resultat: str, out: Path, utilises: list[str],
+                           manquants: list[str], suivi_id: str | None,
+                           echeance_id: str | None, parametres: dict) -> str | None:
+    """Chaque source utilisée devient une `Ressource` traçable (si elle ne
+    l'est pas déjà) — un `Resultat` ne référence jamais un simple nom de
+    fichier texte, toujours un identifiant stable (§2, §6). Renvoie l'id du
+    `Resultat` créé (None si l'enregistrement a échoué) pour que l'appelant
+    puisse clore le suivi de génération (§1, lot 3) sur le bon résultat."""
+    try:
+        from src.agents.study.store import ajouter_ressource, ajouter_resultat
+        ressource_ids = [ajouter_ressource("document", nom, "copie", nom)["id"] for nom in utilises]
+        resultat = ajouter_resultat(type_resultat, out.name, ressources_utilisees=ressource_ids,
+                                     ressources_manquantes=manquants, suivi_id=suivi_id,
+                                     echeance_id=echeance_id, parametres=parametres)
+        return resultat["id"]
+    except Exception as e:
+        console.print(command_panel(f"résultat généré mais pas enregistré dans le suivi : {e}", error=True))
+        return None
+
+
+def _avertissement_sources_manquantes(manquants: list[str]) -> str:
+    if not manquants:
+        return ""
+    return f"\n\n⚠️ Non lus, absents du résultat : {', '.join(manquants)}."
+
+
+def _rafraichir_overlay_etudes() -> None:
+    """Pousse un `raccourci_resultat` à jour pour les panneaux Études de
+    l'île — même mécanisme que `app.py::_gerer_creer_suivi` (§1, lot 3).
+    Sans ça, l'île n'apprendrait un changement de statut de génération
+    qu'au prochain clic manuel sur « Actualiser ». Silencieux si l'île
+    n'est pas connectée : la génération elle-même ne doit jamais dépendre
+    d'elle."""
+    try:
+        from src.ui.raccourcis_overlay import executer
+        for action in ("etudes_suivis", "etudes_fiches_recentes"):
+            resultat = executer(action, None)
+            pont.envoyer(type="raccourci_resultat", action=action, **resultat)
+    except Exception:
+        pass
+
+
+def _generation_deja_en_cours(suivi_id: str | None, type_gen: str, commande: str) -> bool:
+    """Le verrou anti-doublon VIT côté backend (§1, lot 3) — pas un délai
+    local côté île, qui ne reflète qu'une estimation. `generation_active`
+    est la seule source de vérité, consultée à chaque lancement, y compris
+    depuis le terminal (pas seulement depuis l'île)."""
+    from src.agents.study.store import generation_active
+
+    if generation_active(suivi_id, type_gen) is None:
+        return False
+    msg = (f"une génération est déjà en cours pour cette commande — attends qu'elle "
+           f"se termine, ou relance {commande} si elle a échoué")
+    console.print(command_panel(msg, error=True))
+    pont.etat("erreur", msg)
+    return True
+
+
+def _handle_fiche(graph, state: dict, cfg: "SessionConfig", suivi_id: str | None = None) -> None:
+    if _generation_deja_en_cours(suivi_id, "fiche", "/fiche"):
         return
 
     attachments = _attachments.pop_all()
-    content = _build_pdf_content(attachments)
-    if not content:
-        console.print(command_panel("aucun contenu texte extrait des pièces jointes", error=True))
+    ressources = _ressources_documents_du_suivi(suivi_id)
+    if not attachments and not ressources:
+        msg = "joint d'abord tes PDF avec /attach (ou associe un document au suivi), puis relance /fiche"
+        console.print(command_panel(msg, error=True))
+        pont.etat("erreur", msg)
         return
 
-    slug = _pdf_slug(attachments)
+    content, utilises, manquants = _build_pdf_content(attachments, ressources)
+    if not content:
+        msg = "aucun contenu texte extrait des sources"
+        console.print(command_panel(msg, error=True))
+        pont.etat("erreur", msg)
+        return
+
+    from src.agents.study.store import demarrer_generation, terminer_generation, echouer_generation
+    generation = demarrer_generation(suivi_id, "fiche")
+    _rafraichir_overlay_etudes()
+
+    slug = _pdf_slug(utilises)
     from src.orchestrator.noeuds.chat import get_lang_pref
     from src.llm.prompts import _LANG_INSTRUCTIONS
     lang_instruction = _LANG_INSTRUCTIONS.get(get_lang_pref(), _LANG_INSTRUCTIONS["fr"])
@@ -218,34 +347,53 @@ def _handle_fiche(graph, state: dict, cfg: "SessionConfig") -> None:
     prompt = _charger_template("fiche", content=content[:60_000],
                                lang=lang_instruction)
     result = _run_letter_stream(graph, prompt, [], cfg)
-    if result:
-        try:
-            out = _save_html_output(result, "fiche", slug)
-            t = Text()
-            t.append("  📄  ", style=f"bold {ACCENT}")
-            t.append(str(out), style=ACCENT)
-            console.print(t)
-            import subprocess
-            subprocess.Popen(["xdg-open", str(out)])
-        except Exception as e:
-            console.print(command_panel(f"erreur sauvegarde : {e}", error=True))
-
-
-def _handle_exo(graph, state: dict, cfg: "SessionConfig") -> None:
-    if not _attachments:
-        console.print(command_panel("joint d'abord tes PDF avec /attach, puis relance /exo", error=True))
+    if not result:
+        echouer_generation(generation["id"], "le modèle n'a produit aucun contenu")
+        _rafraichir_overlay_etudes()
         return
+
+    try:
+        out = _save_html_output(result, "fiche", slug)
+        t = Text()
+        t.append("  📄  ", style=f"bold {ACCENT}")
+        t.append(str(out), style=ACCENT)
+        console.print(t)
+        resultat_id = _enregistrer_resultat("fiche", out, utilises, manquants, suivi_id, None, {})
+        terminer_generation(generation["id"], resultat_id or "")
+        _rafraichir_overlay_etudes()
+        avert = _avertissement_sources_manquantes(manquants)
+        pont.message(f"📄 Fiche de révision générée et ouverte dans le navigateur.\n\n"
+                     f"**{out.name}**\n`{out}`{avert}")
+        import subprocess
+        subprocess.Popen(["xdg-open", str(out)])
+    except Exception as e:
+        echouer_generation(generation["id"], str(e))
+        _rafraichir_overlay_etudes()
+        msg = f"erreur sauvegarde : {e}"
+        console.print(command_panel(msg, error=True))
+        pont.etat("erreur", msg)
+
+
+def _handle_exo(graph, state: dict, cfg: "SessionConfig", suivi_id: str | None = None) -> None:
+    if _generation_deja_en_cours(suivi_id, "exo", "/exo"):
+        return
+
+    attachments = _attachments.pop_all()
+    ressources = _ressources_documents_du_suivi(suivi_id)
+    if not attachments and not ressources:
+        msg = "joint d'abord tes PDF avec /attach (ou associe un document au suivi), puis relance /exo"
+        console.print(command_panel(msg, error=True))
+        pont.etat("erreur", msg)
+        return
+
+    # `pick()` tente l'île d'abord (même protocole HITL que /backend, /model) et
+    # ne retombe sur le prompt terminal que si elle ne répond pas — l'ancien
+    # `_session.prompt()` bloquait sur un canal que l'île ne voit jamais : le
+    # bouton « générer des exercices » de l'île restait figé sans explication.
+    from .picker import pick
 
     console.print(Rule(characters="·", style=f"dim {ACCENT}"))
-    t = Text()
-    t.append("  🎯  ", style=f"bold {ACCENT}")
-    t.append("Type d'exercices", style=f"dim {ACCENT}")
-    t.append("  — qcm / ouvert / mixte (défaut: mixte)", style="dim")
-    console.print(t)
-    try:
-        choix = _session.prompt("  ").strip().lower() or "mixte"
-    except (EOFError, KeyboardInterrupt):
-        return
+    choix = pick(["mixte", "qcm", "ouvert"], title="Type d'exercices", current="mixte") or "mixte"
 
     types = {
         "qcm":    "QCM uniquement (4 choix par question, avec explication de la bonne réponse).",
@@ -254,13 +402,18 @@ def _handle_exo(graph, state: dict, cfg: "SessionConfig") -> None:
     }
     type_exo = types.get(choix, types["mixte"])
 
-    attachments = _attachments.pop_all()
-    content = _build_pdf_content(attachments)
+    content, utilises, manquants = _build_pdf_content(attachments, ressources)
     if not content:
-        console.print(command_panel("aucun contenu texte extrait des pièces jointes", error=True))
+        msg = "aucun contenu texte extrait des sources"
+        console.print(command_panel(msg, error=True))
+        pont.etat("erreur", msg)
         return
 
-    slug = _pdf_slug(attachments)
+    from src.agents.study.store import demarrer_generation, terminer_generation, echouer_generation
+    generation = demarrer_generation(suivi_id, "exo")
+    _rafraichir_overlay_etudes()
+
+    slug = _pdf_slug(utilises)
     from src.orchestrator.noeuds.chat import get_lang_pref
     from src.llm.prompts import _LANG_INSTRUCTIONS
     lang_instruction = _LANG_INSTRUCTIONS.get(get_lang_pref(), _LANG_INSTRUCTIONS["fr"])
@@ -268,17 +421,32 @@ def _handle_exo(graph, state: dict, cfg: "SessionConfig") -> None:
     prompt = _charger_template("exo", content=content[:60_000],
                                lang=lang_instruction, type_exo=type_exo)
     result = _run_letter_stream(graph, prompt, [], cfg)
-    if result:
-        try:
-            out = _save_html_output(result, "exo", slug)
-            t = Text()
-            t.append("  🎯  ", style=f"bold {ACCENT}")
-            t.append(str(out), style=ACCENT)
-            console.print(t)
-            import subprocess
-            subprocess.Popen(["xdg-open", str(out)])
-        except Exception as e:
-            console.print(command_panel(f"erreur sauvegarde : {e}", error=True))
+    if not result:
+        echouer_generation(generation["id"], "le modèle n'a produit aucun contenu")
+        _rafraichir_overlay_etudes()
+        return
+
+    try:
+        out = _save_html_output(result, "exo", slug)
+        t = Text()
+        t.append("  🎯  ", style=f"bold {ACCENT}")
+        t.append(str(out), style=ACCENT)
+        console.print(t)
+        resultat_id = _enregistrer_resultat("exo", out, utilises, manquants, suivi_id, None, {"type_exo": choix})
+        terminer_generation(generation["id"], resultat_id or "")
+        _rafraichir_overlay_etudes()
+        avert = _avertissement_sources_manquantes(manquants)
+        pont.message(f"🎯 Exercices générés et ouverts dans le navigateur.\n\n"
+                     f"**{out.name}**\n`{out}`{avert}")
+        import subprocess
+        subprocess.Popen(["xdg-open", str(out)])
+    except Exception as e:
+        echouer_generation(generation["id"], str(e))
+        _rafraichir_overlay_etudes()
+        msg = f"erreur sauvegarde : {e}"
+        console.print(command_panel(msg, error=True))
+        pont.etat("erreur", msg)
+
 
 
 _LETTRE_PROMPT = """\
@@ -647,7 +815,7 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                 target=_make_thinking_loop(stop_thinking, live, activity=activity), daemon=True)
             t.start()
 
-            for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
+            for msg, meta in _stream_et_publier(graph, current_state, config):
                 node = meta.get("langgraph_node") or "unknown"
                 if isinstance(msg, ToolMessage):
                     tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
@@ -903,11 +1071,112 @@ def _dernier_texte_du_modele(messages: list) -> str:
     return ""
 
 
+# ── Île (overlay) : relais du flux + de la saisie ──────────────────────────
+#
+# Rien ici ne change le rendu CLI existant : ces fonctions enveloppent les
+# points d'entrée (graph.stream, la lecture de la ligne tapée) sans toucher à
+# leur logique. Si l'île n'est pas lancée, `pont.envoyer()` échoue vite et
+# silencieusement — Axon tourne exactement comme avant.
+
+def _resumer_pour_overlay(entree) -> str:
+    if isinstance(entree, dict):
+        for cle in ("command", "commande", "query", "path", "url"):
+            if cle in entree:
+                return str(entree[cle])[:200]
+    return str(entree)[:200] if entree else ""
+
+
+def _publier_vers_overlay(msg, texte: list[str]) -> None:
+    if not isinstance(msg, AIMessageChunk):
+        return
+    contenu = msg.content or ""
+    if isinstance(contenu, list):
+        contenu = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in contenu)
+    if contenu:
+        texte.append(contenu)
+        pont.etat("thinking", "réfléchit")
+        return
+    for tc in (getattr(msg, "tool_calls", None) or []):
+        nom = tc.get("name") or ""
+        if nom:
+            pont.outil(nom, _resumer_pour_overlay(tc.get("args")))
+
+
+def _stream_et_publier(graph, entree, config):
+    """Même générateur que `graph.stream(..., stream_mode="messages")`, en
+    relayant aussi vers l'île si elle est connectée. Pur passe-plat : le
+    rendu CLI qui consomme ce générateur ne voit aucune différence."""
+    pont.etat("thinking", "lit ta demande")
+    texte: list[str] = []
+    for msg, meta in graph.stream(entree, config=config, stream_mode="messages"):
+        _publier_vers_overlay(msg, texte)
+        yield msg, meta
+    if texte:
+        pont.etat("finished", "réponse prête")
+        pont.message("".join(texte))
+
+
+def _servir_demande_pont(demande):
+    """Pose la question du graphe à l'île si elle est connectée ; le CLI
+    comme toujours sinon. Volontairement EXCLUSIF, pas une course avec le
+    clavier : annuler une sélection en cours de lecture TTY brute
+    (`review.py`) n'est pas fiable. Tant que l'île est ouverte, TOUT type de
+    demande (autorisation, clarification, diff, plan, envoi) s'y répond —
+    pas seulement les autorisations : `Demande` est déjà générique côté
+    graphe (cf. hitl.py), ce serait arbitraire de n'en câbler qu'une sorte."""
+    if pont.connecte and demande.questions:
+        reponses = pont.demander(demande.en_clair())
+        if reponses is not None:
+            return reponses
+    from .review import servir_demande
+    return servir_demande(demande)
+
+
+#: Thread de lecture terminal en vol, réutilisé entre deux tours : si une
+#: commande de l'île gagne la course, le thread terminal reste bloqué sur
+#: `_session.prompt()` en attendant une frappe réelle — en lancer un second
+#: lirait le TTY depuis deux threads à la fois (prompt_toolkit n'aime pas ça).
+_fil_terminal: threading.Thread | None = None
+_sortie_terminal: "queue.Queue[str | None]" = queue.Queue()
+
+
+def _demarrer_lecture_terminal() -> None:
+    global _fil_terminal
+    if _fil_terminal is not None and _fil_terminal.is_alive():
+        return
+
+    def _cible() -> None:
+        try:
+            texte = _session.prompt(_prompt_tokens)
+        except (EOFError, KeyboardInterrupt):
+            texte = None
+        _sortie_terminal.put(texte)
+
+    _fil_terminal = threading.Thread(target=_cible, daemon=True)
+    _fil_terminal.start()
+
+
+def _lire_entree_utilisateur() -> str:
+    """La prochaine ligne : tapée dans le terminal, ou envoyée depuis l'île —
+    la première arrivée gagne. Lève KeyboardInterrupt comme avant si le
+    terminal se ferme (EOF/Ctrl+C)."""
+    _demarrer_lecture_terminal()
+    while True:
+        try:
+            return pont.commandes.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            texte = _sortie_terminal.get(timeout=0.1)
+        except queue.Empty:
+            continue
+        if texte is None:
+            raise KeyboardInterrupt
+        return texte.strip()
+
+
 def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
-    try:
-        user_message = _session.prompt(_prompt_tokens).strip()
-    except (EOFError, KeyboardInterrupt):
-        raise KeyboardInterrupt
+    user_message = _lire_entree_utilisateur().strip()
 
     if not user_message:
         return
@@ -1034,12 +1303,18 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             _handle_ameliore(graph, state, cfg)
             return
 
-        if user_message == "/fiche":
-            _handle_fiche(graph, state, cfg)
+        if user_message == "/fiche" or user_message.startswith("/fiche "):
+            # Argument optionnel : l'ID d'un suivi (`/fiche suivi_xxxx`), pour
+            # que le bouton « Créer une fiche » d'un suivi dans l'île rattache
+            # directement le résultat sans repasser par /attach — ses
+            # ressources "document" sont utilisées telles quelles.
+            suivi_id = user_message.split(maxsplit=1)[1].strip() if " " in user_message else None
+            _handle_fiche(graph, state, cfg, suivi_id=suivi_id or None)
             return
 
-        if user_message == "/exo":
-            _handle_exo(graph, state, cfg)
+        if user_message == "/exo" or user_message.startswith("/exo "):
+            suivi_id = user_message.split(maxsplit=1)[1].strip() if " " in user_message else None
+            _handle_exo(graph, state, cfg, suivi_id=suivi_id or None)
             return
 
         if user_message.startswith("/spec"):
@@ -1201,6 +1476,8 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             t.append(f"{len(sous)} sous-question(s) : ", style="dim white")
             t.append(" · ".join(sous)[:140], style="dim")
             console.print(t)
+            if sous:
+                pont.outil("deep_research", f"{len(sous)} sous-question(s) : " + " · ".join(sous))
             return
         if noeud == "chercher_une":
             for trouvaille in partiel.get("trouvailles") or []:
@@ -1226,6 +1503,16 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     if domaines:
                         t.append("  " + ", ".join(domaines[:4]), style="dim")
                 console.print(t)
+                # Même événement vers l'île qu'au terminal : avant ce correctif,
+                # /deep ne racontait les sites visités qu'au CLI, jamais à
+                # l'overlay — le sous-graphe a son propre callback de
+                # progression, séparé du flux d'outils normal que l'île suit.
+                if echec:
+                    detail = contenu.removeprefix("[recherche échouée : ").removesuffix("]")
+                    pont.outil("deep_research", f"{sujet[:80]} — échec : {detail[:90]}")
+                else:
+                    domaines = trouvaille.get("domaines") or []
+                    pont.outil("deep_research", sujet[:80] + (f" — {', '.join(domaines[:4])}" if domaines else ""))
             return
         if noeud == "combler":
             reste = partiel.get("a_chercher") or []
@@ -1235,12 +1522,14 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 t.append(f"tour {partiel.get('tours', 2)} : {len(reste)} question(s) "
                          "encore ouverte(s)", style="dim white")
                 console.print(t)
+                pont.outil("deep_research", f"tour {partiel.get('tours', 2)} : {len(reste)} question(s) encore ouverte(s)")
             return
         if noeud == "synthetiser":
             t = Text()
             t.append("", style=f"bold {ACCENT}")
             t.append("rédaction de la synthèse…", style="dim white")
             console.print(t)
+            pont.outil("deep_research", "rédaction de la synthèse…")
 
     def _coding_progress(tool_name: str, args: dict, result: dict | None = None):
         """Called by the coding specialist for plan/file/shell events."""
@@ -1277,6 +1566,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             t.append("Agent code : ", style="dim white")
             t.append(model, style=f"bold {ACCENT}")
             console.print(t)
+            pont.outil("specialist", model)
             _resume_thinking()
             return None
 
@@ -1289,6 +1579,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 t.append("Stack détecté : ", style="dim white")
                 t.append(stack, style=f"bold {ACCENT}")
                 console.print(t)
+                pont.outil("load_skill", stack)
             _resume_thinking()
             return None
 
@@ -1307,6 +1598,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             t.append(f"{(args or {}).get('provider', '?')} — {raison}, "
                      f"clé suivante ({(args or {}).get('key', '')})", style="dim white")
             console.print(t)
+            pont.outil("rotation de clé", f"{(args or {}).get('provider', '?')} — {raison}")
             _resume_thinking()
             return None
 
@@ -1319,6 +1611,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             t.append(vers, style=f"bold {ACCENT}")
             t.append("  (le backend courant devient celui-ci)", style="dim")
             console.print(t)
+            pont.outil("bascule de backend", f"{depuis} épuisé — bascule sur {vers}")
             _resume_thinking()
             return None
 
@@ -1331,6 +1624,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 t.append("  $ ", style=f"bold {ACCENT}")
                 t.append(display, style="white")
                 console.print(t)
+                pont.outil("shell", display)
 
         elif tool_name == "shell_cd:before":
             path = (args or {}).get("path", "")
@@ -1339,6 +1633,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 t.append("  cd ", style=f"dim {ACCENT}")
                 t.append(path, style="dim white")
                 console.print(t)
+                pont.outil("shell_cd", path)
 
         # ── Shell result (after execution) ────────────────────────────────────
         elif tool_name == "shell_run":
@@ -1397,6 +1692,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             t.append(f"  {icon}  ", style=f"dim {ACCENT}")
             t.append(short or tool_name, style="dim")
             console.print(t)
+            pont.outil(tool_name, short or "")
 
         # ── Plan ──────────────────────────────────────────────────────────────
         elif tool_name in ("dev_plan_step_done", "dev_plan_update"):
@@ -1584,7 +1880,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         _stream_input = current_state
         while True:
             _needs_stream_restart = False
-            for msg, meta in graph.stream(_stream_input, config=config, stream_mode="messages"):
+            for msg, meta in _stream_et_publier(graph, _stream_input, config):
                 node = meta.get("langgraph_node") or "unknown"
 
                 if cfg.debug and node != last_debug_node:
@@ -1709,8 +2005,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                            _thinking_thread[0] if _thinking_thread else None)
                 from src.orchestrator.commun.hitl import reponse as _reponse_hitl
 
-                from .review import servir_demande
-                _stream_input = _reponse_hitl(servir_demande(_demande))
+                _stream_input = _reponse_hitl(_servir_demande_pont(_demande))
                 live.start(refresh=False)
                 _redemarrer_animation(stop_thinking, live, _thinking_thread,
                                       compile_mode, activity)
@@ -1782,7 +2077,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 threading.Thread(target=_make_thinking_loop(stop2, live2), daemon=True).start()
                 rc2 = ""
                 saw2 = False
-                for msg2, meta2 in graph.stream(current_state, config=config, stream_mode="messages"):
+                for msg2, meta2 in _stream_et_publier(graph, current_state, config):
                     if isinstance(msg2, (AIMessageChunk, AIMessage)):
                         chunk2 = msg2.content or ""
                         if isinstance(chunk2, list):

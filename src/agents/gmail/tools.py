@@ -239,10 +239,58 @@ def gmail_search(query: str = "newer_than:7d", max_results: int = 7) -> str:
     )
     return f"📬 **{len(rows)} mail(s)**\n\n{table}"
 
+def _texte_brut(html_ou_texte: str) -> str:
+    """Un corps de mail HTML lisible par un LLM sans le bruit des balises."""
+    import html as _html
+
+    if "<" not in html_ou_texte:
+        return html_ou_texte
+    sans_scripts = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html_ou_texte)
+    sans_balises = re.sub(r"(?s)<[^>]+>", " ", sans_scripts)
+    return re.sub(r"[ \t]+", " ", _html.unescape(sans_balises)).strip()
+
+
+def _resumer_le_corps(sujet: str, corps: str) -> str:
+    """Un vrai résumé généré par un LLM, pas une troncature mécanique du mail.
+
+    Même chemin que `_generer_via_skill` (src/agents/study/tools.py) : un appel
+    direct hors graphe, qui parcourt les clés du backend courant puis les
+    fournisseurs de repli — une clé épuisée ne doit pas faire échouer le résumé.
+    """
+    from langchain_core.messages import HumanMessage
+    from src.infra.settings import settings
+    from src.llm.models import make_orchestrator_llm_with_key
+    from src.llm.rotation import clients, marquer_echec, vaut_la_peine_de_reessayer
+    from src.orchestrator.commun.messages import texte_du_contenu
+
+    corps = corps.strip()
+    if not corps:
+        return "_(mail sans corps lisible)_"
+    prompt = (
+        "Résume ce mail en 3 à 5 phrases, en français, en gardant les informations "
+        "concrètes (dates, montants, demandes, décisions à prendre). Pas de formule "
+        "de politesse ni de méta-commentaire, va droit au contenu.\n\n"
+        f"Objet : {sujet or '(sans objet)'}\n\n{corps[:6000]}"
+    )
+    derniere: Exception | None = None
+    for fournisseur, cle, llm in clients(settings.llm_backend, make_orchestrator_llm_with_key):
+        try:
+            reponse = llm.invoke([HumanMessage(content=prompt)])
+            texte = texte_du_contenu(reponse.content).strip()
+            if texte:
+                return texte
+        except Exception as exc:  # noqa: BLE001 — fournisseur suivant
+            derniere = exc
+            marquer_echec(fournisseur, cle, exc)
+            if not vaut_la_peine_de_reessayer(exc):
+                break
+    raise RuntimeError(str(derniere) if derniere else "aucun fournisseur n’a répondu")
+
+
 @tool
 def gmail_summarize(message_id: str) -> str:
     """
-    Lit et résume le contenu complet d'un email Gmail à partir de son identifiant.
+    Lit un email Gmail complet et en génère un vrai résumé (pas un extrait brut).
 
     Utilise ce tool quand l'utilisateur veut :
     - lire le contenu d'un mail en détail
@@ -252,45 +300,48 @@ def gmail_summarize(message_id: str) -> str:
     Mots-clés : mail, email, lire, contenu, résumé, corps du message, détail
 
     **Args:**
-        - `message_id` (str) : Identifiant Gmail du message à résumer  
+        - `message_id` (str) : Identifiant Gmail du message à résumer
           (obtenu via `gmail_search()` ou depuis l’URL Gmail).
 
     **Returns:**
-        - Chaîne Markdown avec :
-            * Expéditeur, Objet, Date
-            * Extrait généré par Gmail
-            * Début du corps (max 1000 caractères)
+        - Chaîne Markdown avec Expéditeur, Date et un résumé généré par LLM
+          (3 à 5 phrases). Si aucun fournisseur LLM ne répond, se replie sur un
+          extrait brut du corps plutôt que d'échouer.
 
     **Raises:**
         - Erreurs API Gmail si l’ID est invalide ou introuvable
-
-    **Note:**
-        - HTML → texte brut automatique
-        - Corps tronqué pour éviter les réponses trop longues
     """
     service = get_gmail_service()
     msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()
 
     headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
     snippet = msg.get("snippet", "")
-    body_parts = []
+    plain_parts, html_parts = [], []
 
     def extract_parts(payload):
-        if "body" in payload and "data" in payload["body"]:
-            body_parts.append(base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore"))
+        data = payload.get("body", {}).get("data")
+        if data:
+            texte = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+            (plain_parts if payload.get("mimeType") == "text/plain" else html_parts).append(texte)
         for part in payload.get("parts", []):
             extract_parts(part)
 
     extract_parts(msg["payload"])
-    body_text = "\n".join(body_parts)
+    corps_brut = "\n".join(plain_parts) if plain_parts else "\n".join(html_parts)
+    body_text = _texte_brut(corps_brut).strip() or snippet
+    sujet = headers.get("Subject") or "(sans objet)"
+
+    try:
+        resume = _resumer_le_corps(sujet, body_text)
+    except Exception as exc:  # noqa: BLE001 — dégrade plutôt qu'échoue
+        extrait = body_text[:1000] + ("..." if len(body_text) > 1000 else "")
+        resume = f"_(résumé indisponible : {exc})_\n\n**Extrait :**\n{extrait}"
 
     return (
-        f"# 📨 Résumé du mail\n"
+        f"# 📨 {sujet}\n"
         f"**De :** {headers.get('From')}  \n"
-        f"**Objet :** {headers.get('Subject')}  \n"
         f"**Date :** {headers.get('Date')}  \n\n"
-        f"**Extrait :**\n{snippet}\n\n"
-        f"**Corps (début) :**\n{body_text[:1000]}{'...' if len(body_text) > 1000 else ''}"
+        f"{resume}"
     )
 
 @tool

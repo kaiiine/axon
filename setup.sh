@@ -5,6 +5,22 @@
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# Toujours travailler dans le dépôt, quel que soit le dossier d'où on lance
+# le script : sinon `bash ai-agent/setup.sh` créerait .venv et .env à côté.
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# Le venv du dépôt : `.venv` s'il existe, sinon un `venv` historique réutilisé
+# tel quel (voir l'étape « Environnement virtuel »), sinon `.venv` à créer.
+dossier_venv() {
+    if [[ -d ".venv" ]]; then
+        echo ".venv"
+    elif [[ -d "venv" ]]; then
+        echo "venv"
+    else
+        echo ".venv"
+    fi
+}
+
 ORANGE='\033[38;5;214m'
 ORANGE_DIM='\033[38;5;172m'
 WHITE='\033[0;97m'
@@ -651,22 +667,21 @@ deploy() {
     # ── 2. Environnement virtuel ──────────────────────────────
     step "Environnement virtuel Python"
 
-    # `.venv` plutôt que `venv` : c'est la convention que suivent uv, Poetry,
-    # VS Code et PyCharm, qui le détectent alors sans qu'on ait à le désigner.
-    if [[ -d "venv" && ! -d ".venv" ]]; then
-        info "Renommage venv → .venv..."
-        mv venv .venv
-        ok "venv renommé en .venv"
-    fi
-    if [[ ! -d ".venv" ]]; then
+    # `.venv` pour une installation neuve : c'est la convention que suivent uv,
+    # Poetry, VS Code et PyCharm. Un `venv` déjà présent est RÉUTILISÉ, jamais
+    # renommé : `bin/activate` et les scripts (`pip`…) gardent le chemin
+    # absolu d'origine, un `mv` les casse — et les services systemd qui
+    # pointent sur `venv/bin/python` (axon-cron…) avec.
+    VENV_DIR="$(dossier_venv)"
+    if [[ ! -d "$VENV_DIR" ]]; then
         info "Création du venv..."
-        python3 -m venv .venv
-        ok ".venv créé"
+        python3 -m venv "$VENV_DIR"
+        ok "$VENV_DIR créé → $(pwd)/$VENV_DIR"
     else
-        ok ".venv déjà présent"
+        ok "$VENV_DIR déjà présent → $(pwd)/$VENV_DIR"
     fi
-    source .venv/bin/activate
-    ok ".venv activé"
+    source "$VENV_DIR/bin/activate"
+    ok "$VENV_DIR activé"
 
     # ── 3. Dépendances ────────────────────────────────────────
     step "Dépendances Python"
@@ -677,12 +692,12 @@ deploy() {
 
     # ── 3b. Playwright (browser headless) ────────────────────
     echo ""
-    if .venv/bin/python -c "from playwright.sync_api import sync_playwright; b = sync_playwright().start(); b.stop()" &>/dev/null 2>&1; then
+    if "$VENV_DIR/bin/python" -c "from playwright.sync_api import sync_playwright; b = sync_playwright().start(); b.stop()" &>/dev/null 2>&1; then
         ok "Playwright — navigateur déjà installé"
     else
         info "Installation des binaires Playwright (Chromium, ~200 MB)..."
-        .venv/bin/python -m playwright install chromium --with-deps --quiet 2>/dev/null \
-            || .venv/bin/python -m playwright install chromium 2>/dev/null \
+        "$VENV_DIR/bin/python" -m playwright install chromium --with-deps --quiet 2>/dev/null \
+            || "$VENV_DIR/bin/python" -m playwright install chromium 2>/dev/null \
             || warn "Playwright install échoué — l'agent browser sera indisponible"
         ok "Playwright — Chromium prêt"
     fi
@@ -777,7 +792,7 @@ echo -e "${ORANGE}  ────────────────────
 echo -e "${ORANGE}  Prêt.${NC}"
 echo ""
 echo -e "  ${WHITE}Lancer Axon :${NC}"
-echo -e "    ${ORANGE}source .venv/bin/activate${NC}"
+echo -e "    ${ORANGE}source $(dossier_venv)/bin/activate${NC}"
 echo -e "    ${ORANGE}python -m src.ui.main${NC}"
 echo ""
 echo -e "  ${DIM}Reconfigurer les intégrations :${NC}  ${ORANGE}bash setup.sh --config-only${NC}"

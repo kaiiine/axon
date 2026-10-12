@@ -300,7 +300,31 @@ def _shutdown(signum, frame):
     PID_FILE.unlink(missing_ok=True)
     sys.exit(0)
 
+def _deja_lance() -> int | None:
+    """Le PID d'une instance déjà vivante, ou None. Devient nécessaire dès que
+    le daemon tourne en permanence (service systemd) : un lancement manuel
+    par habitude, par-dessus, doublerait chaque notification de rappel."""
+    if not PID_FILE.exists():
+        return None
+    try:
+        pid = int(PID_FILE.read_text().strip())
+    except (ValueError, OSError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass  # existe, juste pas à nous — toujours une instance vivante
+    return pid
+
+
 if __name__ == "__main__":
+    pid_existant = _deja_lance()
+    if pid_existant is not None:
+        print(f"axon-cron: déjà lancé (PID {pid_existant}) — arrêt.", flush=True)
+        sys.exit(1)
+
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(os.getpid()))
 

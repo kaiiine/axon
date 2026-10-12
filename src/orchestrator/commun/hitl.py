@@ -37,11 +37,18 @@ class Question:
     """Une question, ses choix éventuels, et lequel vaut accord.
 
     `choix` vide = question ouverte. Ne pas y mettre « Autre » : les clients
-    l'ajoutent eux-mêmes. `affirmatif` doit valoir l'un des `choix`.
+    l'ajoutent eux-mêmes — SAUF si `libre` vaut False. `affirmatif` doit
+    valoir l'un des `choix`.
     """
     texte: str
     choix: tuple[str, ...] = ()
     affirmatif: str = ""
+    #: True (défaut) : une réponse hors `choix` a un sens, le client propose
+    #: « Autre » avec un champ libre — le cas normal d'une clarification.
+    #: False : `choix` est une liste fermée où rien d'autre n'est valide (un
+    #: picker comme /backend — un backend qui n'existe pas serait juste
+    #: rejeté), donc pas d'« Autre » à proposer du tout.
+    libre: bool = True
 
 
 @dataclass(frozen=True)
@@ -66,7 +73,7 @@ class Demande:
             "apercu": self.apercu,
             "extra": dict(self.extra),
             "questions": [{"texte": q.texte, "choix": list(q.choix),
-                           "affirmatif": q.affirmatif}
+                           "affirmatif": q.affirmatif, "libre": q.libre}
                           for q in self.questions],
         }
 
@@ -79,7 +86,7 @@ class Demande:
             extra=dict(brut.get("extra") or {}),
             questions=tuple(
                 Question(texte=q.get("texte", ""), choix=tuple(q.get("choix") or ()),
-                         affirmatif=q.get("affirmatif", ""))
+                         affirmatif=q.get("affirmatif", ""), libre=q.get("libre", True))
                 for q in (brut.get("questions") or [])),
         )
 

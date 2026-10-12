@@ -110,7 +110,231 @@ def _show_resume(thread_id: str) -> None:
 
 
 def run_cli(graph):
+    import threading
+
     from src.ui.streaming import stream_once
+    from src.ui.pont_overlay import pont
+    from src.ui.completer import _COMMANDS
+
+    def _envoyer_commandes() -> None:
+        pont.envoyer(type="commandes", liste=[{"cmd": c, "desc": d} for c, d in _COMMANDS])
+
+    # Si l'île tourne déjà, elle a tout de suite la même liste que le CLI.
+    # Si elle démarre après coup, elle la redemande elle-même au premier
+    # `{"type":"connexion","connecte":true}` qu'elle reçoit (voir index.html).
+    pont.sur_demande_commandes = _envoyer_commandes
+    _envoyer_commandes()
+
+    def _gerer_raccourci(id_: str, action: str, item: str | None, panel: str | None) -> None:
+        # Thread à part : ce sont de vrais appels réseau (Gmail/Jira/Calendar),
+        # le thread de lecture du socket ne doit pas en dépendre pour
+        # continuer à traiter d'autres messages pendant ce temps.
+        # `item`/`panel` ne font qu'un aller-retour : c'est l'île qui a besoin
+        # de savoir à quelle ligne de quel dashboard la réponse appartient,
+        # `raccourcis_overlay.executer` ne s'en sert pas.
+        def tache() -> None:
+            from src.ui.raccourcis_overlay import executer
+
+            reference = {}
+            if item is not None:
+                reference["item"] = item
+            if panel is not None:
+                reference["panel"] = panel
+            try:
+                resultat = executer(action, item)
+                pont.envoyer(type="raccourci_resultat", id=id_, action=action, **reference, **resultat)
+            except Exception as e:
+                pont.envoyer(type="raccourci_erreur", id=id_, action=action, **reference, message=str(e))
+
+        threading.Thread(target=tache, daemon=True).start()
+
+    pont.sur_raccourci = _gerer_raccourci
+
+    def _instantane_pieces_jointes() -> list[dict]:
+        """Snapshot JSON-friendly de la liste courante, pour l'île — pas un
+        état dérivé un à un : affiche ce que `attachments.items` contient
+        MAINTENANT. `add_file` n'échoue jamais en levant (voir
+        `src/ui/attachments.py` : une extraction ratée renvoie un contenu qui
+        commence par « [erreur » / « [Erreur », au lieu de lever), donc
+        l'erreur se détecte ici plutôt que par une exception à capturer.
+        """
+        from src.ui.attachments import attachments as _att
+
+        items = []
+        for a in _att.items:
+            en_erreur = not a.is_image and a.content.lstrip().lower().startswith("[erreur")
+            item = {"nom": a.name, "statut": "erreur" if en_erreur else "ok",
+                     "est_image": a.is_image, "taille": a.size_hint}
+            if en_erreur:
+                item["message"] = a.content.strip()
+            items.append(item)
+        return items
+
+    def _gerer_joindre(chemin: str) -> None:
+        # Thread à part : l'extraction PDF/Office d'un gros fichier ne doit
+        # pas geler la lecture du socket — même raison que `_gerer_raccourci`.
+        def tache() -> None:
+            from pathlib import Path as _Path
+            from src.ui.attachments import attachments as _att
+
+            nom = _Path(chemin).name or chemin
+            if not _Path(chemin).exists():
+                # Jamais ajouté au store : une entrée éphémère suffit, elle
+                # disparaîtra au prochain instantané réel sans rien laisser
+                # d'incohérent derrière elle.
+                ephemere = _instantane_pieces_jointes() + [{
+                    "nom": nom, "statut": "erreur",
+                    "message": "fichier introuvable", "est_image": False, "taille": "",
+                }]
+                pont.pieces_jointes(ephemere)
+                return
+            # Un gros PDF/Office prend une bonne seconde à extraire : sans ce
+            # premier envoi, l'île n'a aucun retour entre le dépôt et la fin
+            # de l'extraction — on pousse un chip "chargement" devant la
+            # liste réelle, remplacé par l'instantané final juste après.
+            en_cours = _instantane_pieces_jointes() + [{
+                "nom": nom, "statut": "chargement", "est_image": False, "taille": "",
+            }]
+            pont.pieces_jointes(en_cours)
+            _att.add_file(chemin)
+            pont.pieces_jointes(_instantane_pieces_jointes())
+
+        threading.Thread(target=tache, daemon=True).start()
+
+    def _gerer_detacher(nom: str) -> None:
+        from src.ui.attachments import attachments as _att
+
+        _att.remove(nom)
+        pont.pieces_jointes(_instantane_pieces_jointes())
+
+    def _gerer_demander_picker() -> None:
+        # Le dialogue natif (zenity/kdialog/tkinter) bloque jusqu'à 120s :
+        # thread dédié, sinon plus aucun autre message de l'île n'est traité
+        # pendant que la fenêtre de sélection est ouverte.
+        def tache() -> None:
+            from src.ui.attachments import attachments as _att, open_file_picker
+
+            chemin = open_file_picker()
+            if chemin:
+                _att.add_file(chemin)
+            pont.pieces_jointes(_instantane_pieces_jointes())
+
+        threading.Thread(target=tache, daemon=True).start()
+
+    def _gerer_creer_suivi(id_: str, titre: str, type_suivi: str, matiere: str) -> None:
+        # Réutilise le TOOL (pas `store.creer_suivi` directement) pour ne pas
+        # dupliquer sa validation du type — une seule source de vérité pour
+        # ce qu'est un type de suivi valide, que l'appel vienne du chat ou
+        # d'ici. Pas de thread : une écriture JSON verrouillée est rapide,
+        # contrairement au dialogue natif ou à l'extraction d'un PDF.
+        #
+        # `creer_suivi_resultat`/`creer_suivi_erreur` (pas `raccourci_*`) :
+        # ce sont des réponses à CETTE soumission précise (§2, lot 3), pas un
+        # rafraîchissement de tout le panneau — l'île n'referme le formulaire
+        # que sur `creer_suivi_resultat`, et affiche l'erreur DANS le
+        # formulaire sur `creer_suivi_erreur`, sans jamais écraser la liste
+        # des suivis déjà affichée par un message d'erreur qui n'a rien à
+        # voir avec elle (c'est ce que faisait l'ancien `raccourci_erreur`
+        # ici — champs jamais rouverts, liste remplacée par une erreur).
+        #
+        # try/except large : TOUT échec (pas seulement la validation du type)
+        # doit répondre par `creer_suivi_erreur`, sinon le formulaire reste
+        # bloqué « en cours » indéfiniment pour l'utilisateur.
+        try:
+            from src.agents.study.tools_suivi import etude_creer_suivi
+
+            titre = titre.strip()
+            if not titre:
+                pont.envoyer(type="creer_suivi_erreur", id=id_, message="titre manquant")
+                return
+            reponse = etude_creer_suivi.invoke({"titre": titre, "type": type_suivi or "autre",
+                                                 "matiere": matiere.strip()})
+            if reponse.startswith("Type inconnu"):
+                pont.envoyer(type="creer_suivi_erreur", id=id_, message=reponse)
+                return
+            _rafraichir_panneaux_etudes("etudes_suivis")
+            pont.envoyer(type="creer_suivi_resultat", id=id_)
+        except Exception as e:
+            pont.envoyer(type="creer_suivi_erreur", id=id_, message=str(e))
+
+    def _rafraichir_panneaux_etudes(*actions: str) -> None:
+        from src.ui.raccourcis_overlay import executer
+
+        for action in actions:
+            resultat = executer(action, None)
+            pont.envoyer(type="raccourci_resultat", action=action, **resultat)
+
+    def _gerer_creer_echeance(id_: str, suivi_id: str, titre: str, type_echeance: str, date: str) -> None:
+        # Même discipline que `_gerer_creer_suivi` (§2) étendue aux échéances
+        # (§3) : réutilise le TOOL existant (sa validation du type/de la
+        # date reste la seule source de vérité), répond par id pour que
+        # l'île sache à QUELLE soumission la réponse correspond, et un
+        # try/except large pour qu'aucun échec ne laisse le formulaire
+        # bloqué « en cours ».
+        from src.agents.study.tools_echeance import etude_ajouter_echeance
+
+        try:
+            reponse = etude_ajouter_echeance.invoke({
+                "suivi_id": suivi_id, "titre": titre.strip() or titre,
+                "type": type_echeance or "autre", "date": date,
+            })
+            if reponse.startswith(("Type inconnu", "Suivi introuvable")):
+                pont.envoyer(type="etudes_action_erreur", id=id_, message=reponse)
+                return
+            _rafraichir_panneaux_etudes("etudes_suivis", "etudes_echeances")
+            pont.envoyer(type="etudes_action_resultat", id=id_)
+        except Exception as e:
+            pont.envoyer(type="etudes_action_erreur", id=id_, message=str(e))
+
+    def _gerer_maj_echeance(id_: str, suivi_id: str, echeance_id: str,
+                             date: str | None, statut: str | None) -> None:
+        # Couvre reporter (date), annuler (statut="annulee") et modifier —
+        # une seule voie, le tool `etude_maj_echeance` décide déjà quoi
+        # reprogrammer (§4, lot 3 : rappels liés à une date reportée).
+        from src.agents.study.tools_echeance import etude_maj_echeance
+
+        try:
+            reponse = etude_maj_echeance.invoke({
+                "suivi_id": suivi_id, "echeance_id": echeance_id, "date": date, "statut": statut,
+            })
+            if reponse.startswith(("Statut inconnu", "Suivi ou échéance introuvable")):
+                pont.envoyer(type="etudes_action_erreur", id=id_, message=reponse)
+                return
+            _rafraichir_panneaux_etudes("etudes_suivis", "etudes_echeances")
+            pont.envoyer(type="etudes_action_resultat", id=id_)
+        except Exception as e:
+            pont.envoyer(type="etudes_action_erreur", id=id_, message=str(e))
+
+    def _gerer_archiver_suivi(id_: str, suivi_id: str) -> None:
+        from src.agents.study.tools_suivi import etude_archiver_suivi
+
+        try:
+            reponse = etude_archiver_suivi.invoke({"suivi_id": suivi_id, "archive": True})
+            if reponse.startswith("Suivi introuvable"):
+                pont.envoyer(type="etudes_action_erreur", id=id_, message=reponse)
+                return
+            _rafraichir_panneaux_etudes("etudes_suivis")
+            pont.envoyer(type="etudes_action_resultat", id=id_)
+        except Exception as e:
+            pont.envoyer(type="etudes_action_erreur", id=id_, message=str(e))
+
+    pont.sur_joindre = _gerer_joindre
+    pont.sur_detacher = _gerer_detacher
+    pont.sur_demander_picker = _gerer_demander_picker
+    pont.sur_creer_suivi = _gerer_creer_suivi
+    pont.sur_creer_echeance = _gerer_creer_echeance
+    pont.sur_maj_echeance = _gerer_maj_echeance
+    pont.sur_archiver_suivi = _gerer_archiver_suivi
+
+    # Une génération encore "en_cours" au démarrage n'a pas pu terminer dans
+    # CE processus — le précédent est mort (crash, kill, coupure) sans mettre
+    # à jour son statut. Purgée une seule fois ici (§1, lot 3), pas à chaque
+    # lecture du store : sinon une VRAIE génération en cours dans un autre
+    # processus (l'île déjà ouverte pendant que le CLI redémarre) serait
+    # faussement marquée en échec en boucle.
+    from src.agents.study.store import purger_generations_bloquees
+    purger_generations_bloquees()
+
     cfg   = SessionConfig()
     state = {"messages": []}
 

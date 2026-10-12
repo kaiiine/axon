@@ -127,6 +127,18 @@ def test_une_demande_survit_a_l_aller_retour_JSON():
     assert Demande.depuis(demande.en_clair()) == demande
 
 
+def test_libre_par_defaut_vrai_et_survit_a_false_dans_laller_retour():
+    """`libre` distingue une clarification ouverte (défaut, « Autre » a un
+    sens) d'un picker à choix fermé comme /backend (`libre=False` : rien
+    hors `choix` n'est valide, donc pas d'« Autre » à proposer)."""
+    assert Question("Un commentaire ?").libre is True
+    demande = Demande(
+        genre="clarification", cle="backend",
+        questions=(Question("backend LLM", ("groq", "ollama"), libre=False),))
+    assert demande.en_clair()["questions"][0]["libre"] is False
+    assert Demande.depuis(demande.en_clair()) == demande
+
+
 def test_le_client_lit_la_demande_dans_la_sortie_du_graphe():
     """Ce que TUI et API partagent — c'est cette lecture commune qui fait que le
     HITL cesse d'être une propriété de l'interface."""

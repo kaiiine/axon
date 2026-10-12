@@ -1,0 +1,15 @@
+{
+  "id": "axon-overlay",
+  "name": "Axon Overlay",
+  "version": "0.2.0",
+  "description": "Overlay GTK/WebKit pour Axon, interface Svelte et TypeScript.",
+  "kind": "desktop-overlay",
+  "entrypoint": "lancer.sh",
+  "toggle": "waybar-toggle.sh",
+  "platforms": ["linux-wayland"],
+  "frontend": "ui/index.html",
+  "bridge": "pont_axon.py",
+  "protocol": "axon-overlay-jsonl-v1",
+  "requirements": ["python3", "python-gobject", "gtk4", "gtk4-layer-shell", "webkitgtk-6.0"],
+  "manifest_note": "Métadonnées locales : à mapper au contrat de la marketplace Axon lorsqu’il sera défini."
+}

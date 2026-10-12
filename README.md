@@ -19,7 +19,7 @@
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kaiiine/axon/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kaiiine/axon/main/install.sh | bash
 ```
 
 > Clones the repo, installs dependencies, configures APIs, downloads Ollama models, installs Playwright, and creates a global `axon` alias.
@@ -28,15 +28,15 @@ Two directories, deliberately separate:
 
 | | |
 |---|---|
-| `~/axon` | the repo — code, `.env`, `.venv`. Override with `AXON_INSTALL_DIR`. |
-| `~/.axon` | Axon's **state** — semantic index, key-pool health, project memory. |
+| the repo | code, `.env`, `.venv`. Run from an existing clone (`bash install.sh`), it installs **in place**; the one-liner clones into `~/ai-agent`. Override with `AXON_INSTALL_DIR`. |
+| `~/.axon` | Axon's **state** — logs, JSON, semantic index, key-pool health, project memory. The only directory Axon creates in your home. |
 
 Keeping them apart is what makes a reinstall safe: wiping the repo to start over
 must not take with it what Axon has learned.
 
 ```bash
-# Or manually:
-git clone https://github.com/kaiiine/axon.git ~/axon && cd ~/axon && bash setup.sh
+# Or from a clone you already have:
+cd ai-agent && bash install.sh
 
 # Reconfigure integrations without reinstalling:
 bash setup.sh --config-only
@@ -247,6 +247,44 @@ Injected into future sessions on the same repo. Browsable in Obsidian (auto-conf
 - **`/fiche`**: single-page HTML covering all concepts, formulas, tables, pitfalls and summary
 - **`/exo`**: interactive exercises with instant feedback, final score, replay
 - Auto-detection: writing "sheet" / "study" with an attached PDF triggers `/fiche`
+- **`/fiche <suivi_id>`** / **`/exo <suivi_id>`**: generate from the documents already attached to a study tracker — no re-`/attach`, and the result is filed under it
+- A second generation of the same kind for the same tracker is **refused while one is running**. The state is persisted, so it survives a tab switch, an island reconnect or a CLI restart; a generation left "running" by a crash is marked failed at the next start, so it never blocks a new one.
+
+### Study tracking
+
+```
+› I have a machine learning exam on November 25
+› What are my next exams?
+› Let's take stock of my ML exam
+› Check how far along my project is
+```
+
+A **tracker** (*suivi*) is the root: a subject, an exam prep, a project, or
+quick one-off work — it does not need a date. Under it:
+
+| | |
+|---|---|
+| **Resources** | documents, folders, Git repos, links — shared between trackers by ID, never copied; an unreachable one is flagged, not purged |
+| **Deadlines** | homework, exam, project delivery — each with its own reminders |
+| **Exercises & tasks** | exercises keep attempts, difficulties and hints given (one at a time, never the full solution); tasks are just to-do / done |
+| **Progress log** | what you declared vs. what a tool observed vs. what Axon only suggested |
+| **Results** | generated sheets/exercises; quick work can be attached to a tracker afterwards |
+| **Project checks** | Axon inspects the linked repo/folder **read-only** with its usual tools, then records what is present, missing, and *unverifiable* — kept as a dated report, never applied automatically |
+
+Missing dates or trackers are asked for (`ask_clarification`), never invented.
+
+**Reminders** — default 7, 3 and 1 day before a deadline, at 9:00
+**Europe/Paris** (summer/winter time handled). They are cron tasks, delivered
+as desktop notifications by the cron daemon, so they fire with Axon closed —
+as long as the daemon runs and your session is open. Postponing a deadline
+reschedules its reminders at the same offsets, with explicit rules:
+
+- the new reminder is created **before** the old one is removed — a crash in between leaves a duplicate, never a lost reminder;
+- a reminder that would now fall in the past is disabled, not left on the old date;
+- an old reminder whose offset is unknown is **left as is and reported**, never rescheduled on a guessed value.
+
+Everything lives in `~/.axon/etudes.json` (atomic writes, schema versioned and
+migrated in place).
 
 ### Presentations & slides
 
@@ -382,6 +420,33 @@ Generates flowcharts, sequence diagrams, class diagrams, ER diagrams, C4 contain
 Native notebook editing: reads cells with indices, edits cell-by-cell with HITL review, inserts new cells, runs and checks outputs. Never corrupts `.ipynb` JSON.
 
 ---
+## Desktop island (`axon-overlay/`)
+
+A small floating island anchored at the top of the screen (GTK4 +
+gtk4-layer-shell + WebKitGTK, Svelte front-end), talking to the running CLI
+over a local Unix socket (`$XDG_RUNTIME_DIR/axon/overlay.sock`, mode 0600).
+If the island is not running, Axon works exactly as before.
+
+- **Home & chat** — mascot reflecting what Axon is doing, the same `/` commands as the terminal, and every human-in-the-loop question (permission, clarification, diff, plan) answerable from the island.
+- **Code** — files and unified diffs as they are touched.
+- **Integrations** — one-click Gmail, Jira and Google Calendar dashboards, read-only shortcuts that skip the agent loop.
+- **Études** — drop a document (or pick one) for quick work; create trackers; generate a sheet or exercises per tracker with a live status (*generating* → *open result* / *retry*); add, postpone or cancel deadlines; archive a tracker; reopen recent results. Forms close only once the CLI has confirmed — on failure they keep what you typed and show the error.
+
+```bash
+# Arch: system packages (not pip)
+sudo pacman -S python-gobject gtk4 gtk4-layer-shell webkitgtk-6.0
+
+cd axon-overlay
+npm ci && npm run build      # → ui/dist/axon.js — rebuild after any front-end change
+sh lancer.sh                 # start the island
+sh waybar-toggle.sh          # open/close it (starts it if needed) — bind it to a key or a Waybar button
+```
+
+The island loads the **built** bundle: after editing `ui/src/`, run
+`npm run build` and restart the island, or it keeps running the old front-end.
+
+---
+
 ## MCP client — external tools inside Axon
 
 
@@ -418,6 +483,7 @@ must not reason on a failure message as if it were data.
 | **Code** | coding specialist HITL, plan, propose_file_change, /build phases |
 | **Notebooks** | notebook_read, notebook_edit_cell, notebook_insert_cell, notebook_run |
 | **Visuals** | Mermaid (diagrams → HTML), create_slides (Reveal.js + PPTX), /fiche, /exo |
+| **Study** | trackers, resources, deadlines, exercises/tasks, progress log, reminders, read-only project checks |
 | **Google Slides** | slides_create, slides_add_slide, slides_from_markdown (online decks only) |
 | **Code graph** | graph_affected, graph_explain, graph_path, graph_query (graphify) |
 | **Scheduled** | schedule_task + cron daemon (delivery to terminal, Slack or email) |
@@ -433,8 +499,8 @@ must not reason on a failure message as if it were data.
 | `/paste` | Paste from clipboard |
 | `/attachments` | List pending attachments |
 | `/detach [file]` | Remove an attachment (or all) |
-| `/fiche` | Generate an HTML study sheet from attached PDFs |
-| `/exo` | Generate interactive exercises from attached PDFs |
+| `/fiche [suivi_id]` | Generate an HTML study sheet from attached PDFs, or from a tracker's documents |
+| `/exo [suivi_id]` | Generate interactive exercises, same sources as `/fiche` |
 | `/letter` | Generate a cover letter (CV + job offer) |
 | `/upgrade` | Improve an existing letter |
 | `/spec` | Interactive wizard to generate a `spec.md` for a new project |
@@ -567,12 +633,15 @@ ollama pull qwen2.5:7b          # Local backend (optional)
 ## Tests
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m pytest tests/ -q
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -q     # use venv/ if your install has no .venv
+cd axon-overlay && npm run check && npm test           # island: types + front-end tests
 ```
 
-**3901 tests**. The suite covers tool routing (two reference corpora, one of
-them held out from tuning), provider error recovery, MCP invariants, prompt
-invariants, and identity resolution.
+**~4,570 tests**, plus the island's own front-end suite. They cover tool
+routing (two reference corpora, one of them held out from tuning), provider
+error recovery, MCP invariants, prompt invariants, identity resolution, and
+the study domain end to end — store, tools, reminder rescheduling, the
+island's socket protocol and the CLI handlers behind it.
 
 ---
 
@@ -588,10 +657,13 @@ ai-agent/
 ├── skills/                        # 48 skills (Markdown + frontmatter: scope, aliases, anchors)
 ├── outils/                        # Maintenance scripts (e.g. importing external agent catalogues)
 ├── docs/                          # Design notes, addenda, technical debt
+├── axon-overlay/                  # Desktop island: overlay.py (GTK) + ui/ (Svelte) + pont_axon.py
 │
 └── src/
     ├── ui/                        # Terminal (streaming, commands, completer, attachments)
     │   ├── journal.py             #   one action, one line — verbs, targets, outcomes
+    │   ├── pont_overlay.py        #   socket client to the island (stdlib only)
+    │   ├── raccourcis_overlay.py  #   read-only shortcuts behind the island's dashboards
     │   └── ascii/                 #   right-anchored page previews and animations
     ├── orchestrator/              # LangGraph graph + the questions it delegates:
     │   ├── graph.py               #   wiring and the chat node
@@ -615,7 +687,8 @@ ai-agent/
         ├── slides/                # Reveal.js + PPTX renderer
         ├── mermaid/               # Diagram generation (flowchart, sequence, ER, C4…)
         ├── notebook/              # Jupyter HITL editing (read/edit/insert/run)
-        ├── study/                 # HTML study sheets & exercises
+        ├── study/                 # Study tracking: store.py + tools_{suivi,echeance,progression,verification}.py,
+        │                          #   sheet/exercise generation in tools.py
         ├── cron/                  # Scheduled tasks
         ├── gmail/ · google_calendar/ · google_drive/ · google_doc/ · google_slide/ · google_sheet/
         ├── jira/ · slack/ · email/
