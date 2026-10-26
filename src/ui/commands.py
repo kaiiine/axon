@@ -36,6 +36,8 @@ _COMMANDS = [
     ("/deep <sujet>",     "recherche approfondie — décompose en sous-questions, cherche, recoupe"),
     ("/graph [projet]",   "génère GRAPH_REPORT.md + graph.json + notes Obsidian via graphify (subprocess direct)"),
     ("/mcp <sous-cmd>",   "serveurs MCP — list · add · remove · enable · disable · test [--deep] · tools · refresh · restart"),
+    ("/plugin [sous-cmd]", "marketplace des plugins — list · install · update · remove (sans argument : la liste)"),
+    ("/marketplace",       "choisir un plugin à installer dans la marketplace"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
@@ -445,6 +447,18 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
             return command_panel(handle_mcp(cmd.split()[1:], mcp_runtime()))
         except Exception as e:
             return command_panel(f"erreur mcp : {e}", error=True)
+
+    if cmd in ("/plugin", "/marketplace") or cmd.startswith(("/plugin ", "/plugins")):
+        from rich.console import Console
+        from src.plugins.commandes import handle_plugin
+        from src.ui.picker import pick
+
+        arguments = [] if cmd in ("/marketplace", "/plugins") else cmd.split()[1:]
+        sortie = console or Console()
+        texte = handle_plugin(arguments,
+                              choisir=lambda options, titre: pick(options, title=titre),
+                              annoncer=lambda ligne: sortie.print(f"[dim]  {ligne}[/dim]"))
+        return command_panel(texte, error=texte.startswith("✗"))
 
     if cmd.startswith("/keys"):
         from src.llm.key_pool import get_pool

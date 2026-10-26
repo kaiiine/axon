@@ -1,4 +1,7 @@
-"""src/ui/picker.py — `pick()` essaie d'abord l'île avant le picker terminal.
+"""src/ui/picker.py — `pick()` pose son choix au terminal ET à l'île.
+
+Mis à jour : la demande était EXCLUSIVE à l'île dès qu'elle était connectée,
+ce qui éteignait le terminal (voir course_hitl.py). Historique ci-dessous.
 
 Avant ce correctif, /backend, /model, /mode et le wizard /spec ne proposaient
 leur choix qu'au terminal — même avec l'île ouverte et connectée, elle ne
@@ -40,14 +43,27 @@ def test_ile_non_connectee_ne_consulte_jamais_pont_demander():
         pont.sock = ancien_sock
 
 
-def test_ile_connectee_renvoie_directement_le_choix_valide():
+def _terminal_interrompu_par_l_ile():
+    """`Application.run` tel que le vit le picker quand l'île répond : il
+    attend une touche jusqu'à ce que l'île lève l'annulation."""
+    from src.ui.course_hitl import ANNULATION, ReponseAilleurs
+
+    def run():
+        assert ANNULATION.wait(2), "l'île n'a jamais interrompu le terminal"
+        raise ReponseAilleurs
+    return run
+
+
+def test_ile_connectee_le_choix_de_l_ile_interrompt_le_terminal():
     ancien_sock = pont.sock
     pont.sock = object()
     try:
-        with patch.object(pont, "demander", return_value=["ollama"]) as demander:
+        with patch.object(pont, "demander", return_value=["ollama"]) as demander, \
+                patch.object(pont, "abandonner"):
             with patch("src.ui.picker.Application") as app_cls:
+                app_cls.return_value.run.side_effect = _terminal_interrompu_par_l_ile()
                 resultat = pick(["groq", "ollama"], title="backend LLM")
-        app_cls.assert_not_called()  # jamais touché au picker terminal
+        app_cls.assert_called_once()  # le terminal a bien posé la question aussi
         demander.assert_called_once()
         assert resultat == "ollama"
         # Un backend qui n'existe pas serait juste rejeté — pas de « Autre »
@@ -58,30 +74,34 @@ def test_ile_connectee_renvoie_directement_le_choix_valide():
         pont.sock = ancien_sock
 
 
-def test_reponse_ile_hors_options_est_une_annulation_pas_un_repli_terminal():
+def test_reponse_ile_hors_options_est_une_annulation():
     ancien_sock = pont.sock
     pont.sock = object()
     try:
-        with patch.object(pont, "demander", return_value=["n'importe quoi"]):
+        with patch.object(pont, "demander", return_value=["n'importe quoi"]), \
+                patch.object(pont, "abandonner"):
             with patch("src.ui.picker.Application") as app_cls:
+                app_cls.return_value.run.side_effect = _terminal_interrompu_par_l_ile()
                 resultat = pick(["groq", "ollama"], title="backend LLM")
-        app_cls.assert_not_called()
         assert resultat is None
     finally:
         pont.sock = ancien_sock
 
 
-def test_ile_connectee_mais_sans_reponse_retombe_sur_le_terminal():
+def test_ile_connectee_le_terminal_repond_et_ferme_la_carte_de_l_ile():
+    """Le correctif : île connectée, le terminal pose TOUJOURS la question."""
     ancien_sock = pont.sock
     pont.sock = object()
     try:
-        with patch.object(pont, "demander", return_value=None) as demander:
+        with patch.object(pont, "demander", return_value=None) as demander, \
+                patch.object(pont, "abandonner") as abandonner:
             with patch("src.ui.picker.Application") as app_cls:
                 app_cls.return_value.run.return_value = "ollama"
                 resultat = pick(["groq", "ollama"], title="backend LLM")
-        demander.assert_called_once()
-        app_cls.assert_called_once()  # bien retombé sur le terminal
+        app_cls.assert_called_once()
         assert resultat == "ollama"
+        abandonner.assert_called_once()
+        assert demander.call_count <= 1
     finally:
         pont.sock = ancien_sock
 

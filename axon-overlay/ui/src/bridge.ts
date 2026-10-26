@@ -1,7 +1,17 @@
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { Outbound } from './types';
-export const isNative = () => Boolean(window.webkit?.messageHandlers?.axon);
+
+//: Deux hôtes natifs, une même page : l'île GTK (WebKitGTK, Linux) et
+//: l'enveloppe Tauri (macOS, Windows). Hors des deux, c'est l'aperçu navigateur.
+const gtk = () => window.webkit?.messageHandlers?.axon;
+
+export const isNative = () => Boolean(gtk()) || isTauri();
+
 export function post(message: Outbound): boolean {
-  const target = window.webkit?.messageHandlers?.axon;
-  if (!target) return false;
-  try { target.postMessage(message); return true; } catch { return false; }
+  const cible = gtk();
+  try {
+    if (cible) { cible.postMessage(message); return true; }
+    if (isTauri()) { void invoke('depuis_page', { message }).catch(() => undefined); return true; }
+  } catch { /* hôte indisponible : l'appelant garde son état */ }
+  return false;
 }

@@ -388,7 +388,7 @@ def construire(
             choix=(ABANDONNER, PRECISER, EXECUTER), affirmatif=EXECUTER)
         reponses = hitl.demander(hitl.Demande(
             genre=hitl.PLAN, cle=signature[:80], apercu=apercu,
-            questions=(question, hitl.Question(texte="Que faut-il changer ?")),
+            questions=(question, hitl.Question(texte="Que faut-il changer ?", si=PRECISER)),
         ))
 
         # ── après l'interruption : exécuté une seule fois ────────────────────

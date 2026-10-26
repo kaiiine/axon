@@ -40,10 +40,30 @@ from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 ICI = Path(__file__).resolve().parent
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 SOCKET = RUNTIME / "axon" / "overlay.sock"
+# Canal de contrôle (rappels du démon, bascule) : à part, car `overlay.sock`
+# n'accepte qu'UN client — le CLI — et toute autre connexion l'éjecterait.
+SOCKET_CONTROLE = RUNTIME / "axon" / "controle.sock"
 
 # Deux tailles natives. Aucun remappage ou rechargement lors du changement de vue.
 TAILLE_ACCUEIL = (780, 280)
 TAILLE_DETAIL = (780, 500)
+# Une demande HITL qui arrive île fermée : une petite notification, pas le chat.
+TAILLE_NOTIF = (620, 152)
+# La notification suit la hauteur de son contenu (plusieurs lignes de
+# réponses), dans ces bornes ; au-delà, elle défile.
+HAUTEUR_NOTIF = (120, 340)
+# Avant le survol, juste Axon dans une petite bulle de verre, collée sous la barre.
+TAILLE_PASTILLE = (44, 44)
+MARGE_HAUT = 14
+MARGE_HAUT_PASTILLE = 6
+TAILLES = {"accueil": TAILLE_ACCUEIL, "detail": TAILLE_DETAIL, "notif": TAILLE_NOTIF,
+           "bulle": TAILLE_NOTIF, "pastille": TAILLE_PASTILLE}
+# La notification d'une demande et la bulle d'un rappel suivent leur contenu.
+HAUTEUR_VARIABLE = {"notif", "bulle"}
+# La pastille et la bulle ne font qu'annoncer : avec le clavier, leur apparition
+# volait le focus au terminal — les flèches d'un /backend ne répondaient plus
+# tant que la souris n'avait pas bougé. Leurs boutons restent cliquables.
+SANS_CLAVIER = {"pastille", "bulle"}
 
 
 class PontSocket:
@@ -108,6 +128,46 @@ class PontSocket:
                 return False
 
 
+class CanalControle:
+    """Serveur Unix des messages ponctuels : plusieurs expéditeurs, chacun
+    envoie ses lignes JSON puis se déconnecte. Seuls `rappel` et `basculer`
+    sont acceptés — ce canal ne pilote rien d'autre dans l'île."""
+
+    TYPES = ("rappel", "basculer")
+
+    def __init__(self, chemin: Path, sur_message):
+        self.chemin = chemin
+        self.sur_message = sur_message
+
+    def demarrer(self) -> None:
+        self.chemin.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.chemin.unlink(missing_ok=True)
+        serveur = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        serveur.bind(str(self.chemin))
+        os.chmod(self.chemin, 0o600)
+        serveur.listen(4)
+        threading.Thread(target=self._accepter, args=(serveur,), daemon=True).start()
+
+    def _accepter(self, serveur: socket.socket) -> None:
+        while True:
+            client, _ = serveur.accept()
+            threading.Thread(target=self._lire, args=(client,), daemon=True).start()
+
+    def _lire(self, client: socket.socket) -> None:
+        client.settimeout(5)
+        try:
+            with client, client.makefile("r", encoding="utf-8") as flux:
+                for ligne in flux:
+                    try:
+                        message = json.loads(ligne)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(message, dict) and message.get("type") in self.TYPES:
+                        GLib.idle_add(self.sur_message, message)
+        except OSError:
+            pass
+
+
 class CadreArrondi(Gtk.Box):
     """Clip GTK réel, y compris le fond opaque éventuel de WebKit."""
 
@@ -139,6 +199,8 @@ class Overlay(Gtk.Application):
         self.page_prete = False
         self.attente = []
         self.mode = "accueil"
+        self.taille = TAILLE_ACCUEIL
+        self.hauteur_notif = TAILLE_NOTIF[1]
         self.synchronisation = False
         self.generation = 0
 
@@ -156,7 +218,7 @@ class Overlay(Gtk.Application):
         LayerShell.set_namespace(self.fenetre, "axon-overlay")
         LayerShell.set_layer(self.fenetre, LayerShell.Layer.TOP)
         LayerShell.set_anchor(self.fenetre, LayerShell.Edge.TOP, True)
-        LayerShell.set_margin(self.fenetre, LayerShell.Edge.TOP, 14)
+        LayerShell.set_margin(self.fenetre, LayerShell.Edge.TOP, MARGE_HAUT)
         LayerShell.set_keyboard_mode(self.fenetre, LayerShell.KeyboardMode.ON_DEMAND)
         contenu = WebKit.UserContentManager()
         contenu.register_script_message_handler("axon", None)
@@ -174,10 +236,22 @@ class Overlay(Gtk.Application):
         self.fenetre.set_child(CadreArrondi(self.vue))
         self.fenetre.set_default_size(*TAILLE_ACCUEIL)
         css = Gtk.CssProvider()
-        css.load_from_data(b"window.axon-window { background: transparent; box-shadow: none; border: none; }")
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        css.load_from_data(
+            b"window.axon-window, window.axon-window.background"
+            b" { background: transparent; border-radius: 32px; backdrop-filter: blur(20px);"
+            b" box-shadow: none; border: none; }"
+        )
+        # Au-dessus de ~/.config/gtk-4.0/gtk.css (priorité USER) : les thèmes
+        # GTK peignent un fond opaque sur `.background`, qui masquerait le flou.
+        # backdrop-filter : GTK ≥ 4.22 demande le flou au compositeur
+        # (ext-background-effect-v1) sur la forme arrondie de la fenêtre. Les
+        # règles de couche Hyprland (`blur = true`) n’agissent pas sur les
+        # surfaces layer-shell en 0.56, c’est donc le client qui doit le demander.
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
         self.pont = PontSocket(SOCKET, self.depuis_axon)
         self.pont.demarrer()
+        self.controle = CanalControle(SOCKET_CONTROLE, self.depuis_axon)
+        self.controle.demarrer()
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.basculer)
         self.pid_file = SOCKET.parent / "overlay.pid"
         self.pid_file.write_text(str(os.getpid()))
@@ -220,12 +294,22 @@ class Overlay(Gtk.Application):
         couche = LayerShell.Layer.BOTTOM if ouvert else LayerShell.Layer.TOP
         LayerShell.set_layer(self.fenetre, couche)
 
-    def definir_mode(self, mode):
-        mode = "accueil" if mode == "accueil" else "detail"
-        if mode == self.mode:
+    def definir_mode(self, mode, hauteur=None):
+        mode = mode if mode in TAILLES else "detail"
+        if mode in HAUTEUR_VARIABLE and isinstance(hauteur, (int, float)):
+            bas, haut = HAUTEUR_NOTIF
+            self.hauteur_notif = int(min(max(hauteur, bas), haut))
+        taille = (TAILLES[mode][0], self.hauteur_notif) if mode in HAUTEUR_VARIABLE else TAILLES[mode]
+        if mode == self.mode and taille == self.taille:
             return
+        if (mode == "pastille") != (self.mode == "pastille"):
+            LayerShell.set_margin(self.fenetre, LayerShell.Edge.TOP,
+                                  MARGE_HAUT_PASTILLE if mode == "pastille" else MARGE_HAUT)
+        if (mode in SANS_CLAVIER) != (self.mode in SANS_CLAVIER):
+            LayerShell.set_keyboard_mode(self.fenetre, LayerShell.KeyboardMode.NONE if mode in SANS_CLAVIER
+                                         else LayerShell.KeyboardMode.ON_DEMAND)
         self.mode = mode
-        taille = TAILLE_ACCUEIL if mode == "accueil" else TAILLE_DETAIL
+        self.taille = taille
         self.vue.set_size_request(*taille)
         self.fenetre.set_default_size(*taille)
 
@@ -272,6 +356,9 @@ class Overlay(Gtk.Application):
         if not isinstance(message, dict):
             return False
         genre = message.get("type")
+        if genre == "basculer":
+            self.basculer()
+            return False
         if genre == "selecteur_fichier":
             self.ceder_au_selecteur(message.get("ouvert") is True)
             return False
@@ -280,10 +367,13 @@ class Overlay(Gtk.Application):
             # resterait sous toutes les fenêtres jusqu'au prochain lancement.
             self.ceder_au_selecteur(False)
         self.attente.append(message)
-        if message.get("type") in ("demande", "confirmation"):
+        if message.get("type") in ("demande", "confirmation", "rappel") and not self.ouvert:
+            # Île fermée : un rappel s'ouvre en bulle — Axon vient le dire ;
+            # une demande, en pastille que le survol déplie. Ouverte, c'est la
+            # page qui choisit.
             self.ouvert = True
             self.generation += 1
-            self.definir_mode("detail")
+            self.definir_mode("bulle" if message.get("type") == "rappel" else "pastille")
         self.planifier_sync()
         return False
 
@@ -302,7 +392,7 @@ class Overlay(Gtk.Application):
             if bool(message.get("ouvert")) != self.ouvert:
                 self.basculer()
         elif genre == "mode":
-            self.definir_mode(message.get("mode", "accueil"))
+            self.definir_mode(message.get("mode", "accueil"), message.get("hauteur"))
         elif genre in ("commande", "reponse_demande", "decision", "demander_commandes", "raccourci",
                        "joindre", "detacher", "demander_picker", "creer_suivi",
                        "creer_echeance", "maj_echeance", "archiver_suivi", "lier_ressource", "supprimer_suivi",
@@ -323,6 +413,7 @@ class Overlay(Gtk.Application):
             if self.pid_file.read_text().strip() == str(os.getpid()):
                 self.pid_file.unlink(missing_ok=True)
                 SOCKET.unlink(missing_ok=True)
+                SOCKET_CONTROLE.unlink(missing_ok=True)
         Gtk.Application.do_shutdown(self)
 
     def chargement_echoue(self, _vue, _evenement, uri, erreur):

@@ -74,6 +74,11 @@ def serveurs_mcp() -> Path:
     return Path(os.environ.get("AXON_MCP_CONFIG") or etat("mcp_servers.json"))
 
 
+def plugins() -> Path:
+    """Les plugins installés depuis la marketplace (`/plugin`), un dossier chacun."""
+    return etat("plugins")
+
+
 def pid_cron() -> Path:
     return etat("cron.pid")
 

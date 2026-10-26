@@ -22,6 +22,7 @@ from .language import detect_lang, enforce_lang_output
 from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT, _BOX
 from src.agents.coding.noeud import RAPPORT
 from .render import update_live_markdown, finalize_live
+from src.orchestrator.modele.invocation import classify, modele_hors_offre
 from .journal import (
     Journal, SortieDirecte, bilan, cible_de_l_appel, compte_rendu_de_secours,
     inscrire_resultat, verbe,
@@ -1086,50 +1087,109 @@ def _resumer_pour_overlay(entree) -> str:
     return str(entree)[:200] if entree else ""
 
 
-def _publier_vers_overlay(msg, texte: list[str]) -> None:
-    if not isinstance(msg, AIMessageChunk):
-        return
-    contenu = msg.content or ""
-    if isinstance(contenu, list):
-        contenu = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in contenu)
-    if contenu:
-        texte.append(contenu)
-        pont.etat("thinking", "réfléchit")
-        return
-    for tc in (getattr(msg, "tool_calls", None) or []):
-        nom = tc.get("name") or ""
-        if nom:
-            pont.outil(nom, _resumer_pour_overlay(tc.get("args")))
+class _RelaisOverlay:
+    """Relaie un tour du graphe vers l'île : la réponse en direct, les outils
+    appelés, puis la fin du tour.
+
+    Les morceaux (`AIMessageChunk`) comme les messages entiers (`AIMessage`) :
+    un backend qui ne streame pas (Mistral) n'émet que des messages entiers. Un
+    message déjà relayé en morceaux n'est pas redoublé par sa version entière.
+    """
+
+    #: Intervalle minimal entre deux envois du texte en direct (secondes).
+    INTERVALLE = 0.05
+
+    def __init__(self, horloge=perf_counter) -> None:
+        self._horloge = horloge
+        self._parties: list[str] = []
+        self._streames: set[str] = set()
+        self._message_courant: str | None = None
+        self._dernier_envoi = 0.0
+
+    @property
+    def texte(self) -> str:
+        return "".join(self._parties)
+
+    def recevoir(self, msg) -> None:
+        if not isinstance(msg, (AIMessageChunk, AIMessage)):
+            return
+        ident = getattr(msg, "id", None)
+        if isinstance(msg, AIMessageChunk):
+            if ident:
+                self._streames.add(ident)
+        elif ident in self._streames:
+            return
+
+        contenu = msg.content or ""
+        if isinstance(contenu, list):
+            contenu = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in contenu)
+        if contenu:
+            if self._parties and ident != self._message_courant:
+                self._parties.append("\n\n")
+            self._message_courant = ident
+            self._parties.append(contenu)
+            self._envoyer_direct()
+            return
+        for appel in (getattr(msg, "tool_calls", None) or []):
+            nom = appel.get("name") or ""
+            if nom:
+                pont.outil(nom, _resumer_pour_overlay(appel.get("args")))
+
+    def _envoyer_direct(self) -> None:
+        """Au plus un envoi par `INTERVALLE` ; le dernier morceau retenu part
+        avec le message final de `finir`."""
+        maintenant = self._horloge()
+        if maintenant - self._dernier_envoi < self.INTERVALLE:
+            return
+        self._dernier_envoi = maintenant
+        pont.reponse_flux(self.texte)
+
+    def finir(self, termine: bool) -> None:
+        """Toujours un état de fin : sans lui, une erreur en plein tour (ou un
+        tour sans texte) laissait l'île sur « réfléchit » indéfiniment."""
+        if self._parties:
+            pont.message(self.texte)
+        pont.etat(*(("finished", "réponse prête") if termine
+                    else ("erreur", "le tour s'est interrompu")))
 
 
 def _stream_et_publier(graph, entree, config):
-    """Même générateur que `graph.stream(..., stream_mode="messages")`, en
-    relayant aussi vers l'île si elle est connectée. Pur passe-plat : le
-    rendu CLI qui consomme ce générateur ne voit aucune différence."""
+    """`graph.stream(..., stream_mode="messages")`, relayé à l'île en passant.
+    Le rendu CLI qui consomme ce générateur ne voit aucune différence."""
     pont.etat("thinking", "lit ta demande")
-    texte: list[str] = []
-    for msg, meta in graph.stream(entree, config=config, stream_mode="messages"):
-        _publier_vers_overlay(msg, texte)
-        yield msg, meta
-    if texte:
-        pont.etat("finished", "réponse prête")
-        pont.message("".join(texte))
+    relais = _RelaisOverlay()
+    termine = False
+    try:
+        for msg, meta in graph.stream(entree, config=config, stream_mode="messages"):
+            relais.recevoir(msg)
+            yield msg, meta
+        termine = True
+    finally:
+        relais.finir(termine)
 
 
 def _servir_demande_pont(demande):
-    """Pose la question du graphe à l'île si elle est connectée ; le CLI
-    comme toujours sinon. Volontairement EXCLUSIF, pas une course avec le
-    clavier : annuler une sélection en cours de lecture TTY brute
-    (`review.py`) n'est pas fiable. Tant que l'île est ouverte, TOUT type de
-    demande (autorisation, clarification, diff, plan, envoi) s'y répond —
-    pas seulement les autorisations : `Demande` est déjà générique côté
-    graphe (cf. hitl.py), ce serait arbitraire de n'en câbler qu'une sorte."""
-    if pont.connecte and demande.questions:
-        reponses = pont.demander(demande.en_clair())
-        if reponses is not None:
-            return reponses
+    """Pose la question du graphe au terminal ET à l'île ; la première réponse
+    l'emporte (voir `course_hitl.py`).
+
+    Elle était EXCLUSIVE à l'île dès qu'elle était connectée : depuis que le
+    CLI s'y reconnecte tout seul, il l'est en permanence, et le terminal
+    n'affichait plus aucune demande — plus rien n'était faisable au clavier.
+    TOUT type de demande (autorisation, clarification, diff, plan, envoi)
+    passe par là : `Demande` est générique côté graphe (cf. hitl.py)."""
+    from .course_hitl import en_course
     from .review import servir_demande
-    return servir_demande(demande)
+
+    _liberer_terminal()
+
+    def _annonce() -> None:
+        t = Text()
+        t.append("  ✓  ", style=f"bold {ACCENT}")
+        t.append("répondu depuis l'overlay", style="dim")
+        console.print(t)
+
+    return en_course(demande.en_clair(), lambda: servir_demande(demande),
+                     lambda reponses: reponses, _annonce)
 
 
 #: Thread de lecture terminal en vol, réutilisé entre deux tours : si une
@@ -1138,6 +1198,23 @@ def _servir_demande_pont(demande):
 #: lirait le TTY depuis deux threads à la fois (prompt_toolkit n'aime pas ça).
 _fil_terminal: threading.Thread | None = None
 _sortie_terminal: "queue.Queue[str | None]" = queue.Queue()
+
+
+def _liberer_terminal() -> None:
+    """Referme la saisie terminal restée ouverte après une commande de l'île.
+
+    Quand l'île gagne la course de `_lire_entree_utilisateur`, `_fil_terminal`
+    reste bloqué sur `_session.prompt()`. Une demande HITL posée au terminal se
+    disputerait alors chaque touche avec lui. On le termine sur une ligne vide,
+    que `stream_once` ignore ; le prochain tour en relance un.
+    """
+    if _fil_terminal is None or not _fil_terminal.is_alive():
+        return
+    app = _session.app
+    boucle = getattr(app, "loop", None)
+    if app.is_running and boucle is not None:
+        boucle.call_soon_threadsafe(lambda: app.exit(result="") if app.is_running else None)
+    _fil_terminal.join(timeout=1)
 
 
 def _demarrer_lecture_terminal() -> None:
@@ -2053,6 +2130,8 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         return
 
     except Exception as e:
+        from rich.markdown import Markdown
+        from src.infra.settings import settings
         try:
             live.stop()
         except Exception:
@@ -2125,8 +2204,21 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 "Ce modèle ne supporte pas les images — utilise /new pour repartir sur un thread propre.",
                 error=True,
             ))
+        elif modele_hors_offre(e):
+            console.print(command_panel(
+                f"Ce modèle n'est pas inclus dans ton offre {settings.llm_backend} "
+                f"(0 requête par minute autorisée). Choisis-en un autre avec /model.", error=True))
+        elif classify(e) == "rate_limit":
+            console.print(command_panel(
+                f"{settings.llm_backend} limite le nombre de requêtes de ton offre et refuse "
+                f"encore après deux attentes. Réessaie dans une minute, ou change de "
+                f"backend avec /backend.", error=True))
         else:
             console.print(command_panel(f"erreur : {e}", error=True))
+            # Les outils ont peut-être déjà agi : le dire plutôt qu'une erreur nue.
+            fait = compte_rendu_de_secours(journal, "Le tour s'est arrêté sur cette erreur.")
+            if fait:
+                console.print(Markdown(fait))
     finally:
         set_progress_callback(None)
         set_deep_progress_callback(None)

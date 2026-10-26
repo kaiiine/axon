@@ -22,6 +22,25 @@ _CHAMPS = ("to", "cc", "bcc", "subject", "body",
 _draft: dict = {c: None for c in _CHAMPS} | {"has_draft": False}
 
 
+_ADRESSE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+_TROU = re.compile(r"\[[^\]\n]{2,40}\](?!\()")
+
+
+def _refus_brouillon(to: str, subject: str, body: str) -> str | None:
+    """Un brouillon qui n'a ni destinataire valide ni corps terminé ne se prépare
+    pas : le refus dit au modèle quoi faire, la question à l'utilisateur lui revient."""
+    adresses = [a.strip() for a in re.split(r"[,;]", to or "") if a.strip()]
+    if not adresses or not all(_ADRESSE.match(a) for a in adresses):
+        return ("Brouillon refusé : destinataire absent ou invalide. Appelle ask_clarification "
+                "pour obtenir l'adresse — ne la devine pas — puis rappelle gmail_send_email.")
+    if not (subject or "").strip() or not (body or "").strip():
+        return "Brouillon refusé : objet ou corps vide. Rédige-les avant de rappeler gmail_send_email."
+    if _TROU.search(body):
+        return ("Brouillon refusé : le corps contient des [champs à remplir]. Obtiens la valeur "
+                "avec ask_clarification, ou reformule sans elle.")
+    return None
+
+
 def _vider_brouillon() -> None:
     _draft.update({c: None for c in _CHAMPS})
     _draft["has_draft"] = False
@@ -357,11 +376,15 @@ def gmail_send_email(to: str, subject: str, body: str, cc: str = "",
 
     Mots-clés : envoyer mail, écrire email, rédiger message, gmail, email, destinataire, sujet
 
+    Rédiger le texte : si le corps est à écrire ou à réécrire, appelle d'abord
+    load_skill(stack="redaction"), SEUL dans son tour, puis ce tool avec le texte
+    qui en suit les règles. Un texte dicté mot pour mot n'en a pas besoin.
+
     Le corps s'écrit en MARKDOWN : titres, **gras**, listes, tableaux et liens sont
     mis en forme dans le mail envoyé, en HTML comme en version texte.
 
     **Args:**
-        - `to` (str) : Adresse du destinataire (plusieurs séparées par des virgules)
+        - `to` (str) : Adresse du destinataire (plusieurs séparées par des virgules). Jamais devinée : inconnue → ask_clarification d'abord
         - `subject` (str) : Objet du mail
         - `body` (str) : Corps du message, en markdown
         - `cc` (str, optionnel) : copie
@@ -371,6 +394,9 @@ def gmail_send_email(to: str, subject: str, body: str, cc: str = "",
     **Returns:**
         - Markdown affichant le brouillon créé et rappelant les prochaines actions possibles
     """
+    refus = _refus_brouillon(to, subject, body)
+    if refus:
+        return refus
     _vider_brouillon()
     _draft.update({
         "to": to, "subject": subject, "body": body,
@@ -392,6 +418,10 @@ def gmail_reply(message_id: str, body: str, tous: bool = False) -> str:
     - relancer dans une conversation existante
 
     Mots-clés : répondre, réponse, mail, fil, conversation, relancer, suite
+
+    Rédiger le texte : si le corps est à écrire ou à réécrire, appelle d'abord
+    load_skill(stack="redaction"), SEUL dans son tour, puis ce tool avec le texte
+    qui en suit les règles. Un texte dicté mot pour mot n'en a pas besoin.
 
     À la différence de gmail_send_email, la réponse porte les en-têtes
     `In-Reply-To` et `References` et le `threadId` d'origine : elle s'affiche donc

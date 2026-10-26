@@ -6,6 +6,7 @@ pyyaml
 pydantic
 pydantic-settings
 langchain
+langchain-core
 langchain-community
 langchain-chroma
 langchain-ollama
@@ -17,6 +18,7 @@ requests
 openai
 googlemaps
 google-api-python-client
+google-auth
 google-auth-httplib2
 google-auth-oauthlib
 chromadb
@@ -81,6 +83,14 @@ langbly
 
 # Cron
 apscheduler>=3.10
+
+# Verrous des stores JSON (crons, études) partagés entre le CLI et le démon.
+filelock
+
+# Comptage de tokens du contexte.
+tiktoken
+
+typing-extensions
 
 # Graphe de code — `/graph` et les outils graph_* de l'agent de code.
 # Le dépôt voisin `~/Documents/projets-perso/graphify` était injecté en

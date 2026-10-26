@@ -29,7 +29,7 @@ Two directories, deliberately separate:
 | | |
 |---|---|
 | the repo | code, `.env`, `.venv`. Run from an existing clone (`bash install.sh`), it installs **in place**; the one-liner clones into `~/ai-agent`. Override with `AXON_INSTALL_DIR`. |
-| `~/.axon` | Axon's **state** — logs, JSON, semantic index, key-pool health, project memory. The only directory Axon creates in your home. |''&é
+| `~/.axon` | Axon's **state** — logs, JSON, semantic index, key-pool health, project memory. The only directory Axon creates in your home. |
 
 Keeping them apart is what makes a reinstall safe: wiping the repo to start over
 must not take with it what Axon has learned.
@@ -42,7 +42,20 @@ cd ai-agent && bash install.sh
 bash setup.sh --config-only
 ```
 
-**Requirements:** Python 3.11+ · [Ollama](https://ollama.com/download)
+On **Windows**, from a clone, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup.ps1
+powershell -ExecutionPolicy Bypass -File setup.ps1 -ConfigSeulement   # reconfigure only
+```
+
+Both scripts share the same integration menu (`src/installation`), install the
+reminder daemon with the session (systemd, launchd or a scheduled task) and
+build the desktop island for the platform.
+
+**Requirements:** Python 3.11+ · [Ollama](https://ollama.com/download) — on
+macOS, [Homebrew](https://brew.sh) lets the setup install Ollama itself; on
+Windows, `winget` does.
 
 ---
 
@@ -443,18 +456,35 @@ If the island is not running, Axon works exactly as before.
 - **Études** — drop a document (or pick one) for quick work; create trackers; generate a sheet or exercises per tracker with a live status (*generating* → *open result* / *retry*); add, postpone or cancel deadlines; archive a tracker; reopen recent results. Forms close only once the CLI has confirmed — on failure they keep what you typed and show the error.
 - **Project page** — click a tracker to open its page: deadlines (add one, schedule its reminders with the bell), a month calendar of deadlines, reminders, commits, generated sheets and checks, linked repositories with their live Git state, tasks, the last check. Local data shows instantly; an **AI summary** of the whole project (READMEs, specs, recent commits, tasks, deadlines) streams in token by token, is kept for the next visit, and can be regenerated. One-click AI actions: check progress, propose tasks, take stock.
 
+The island is a **plugin**: install it from the marketplace, then restart Axon.
+
 ```bash
 # Arch: system packages (not pip)
 sudo pacman -S python-gobject gtk4 gtk4-layer-shell webkitgtk-6.0
-
-cd axon-overlay
-npm ci && npm run build      # → ui/dist/axon.js — rebuild after any front-end change
-sh lancer.sh                 # start the island
-sh waybar-toggle.sh          # open/close it (starts it if needed) — bind it to a key or a Waybar button
 ```
 
-The island loads the **built** bundle: after editing `ui/src/`, run
-`npm run build` and restart the island, or it keeps running the old front-end.
+```
+/plugin                      # pick "Axon Overlay" → Installer
+/plugin install ./axon-overlay   # or from the working tree, while developing it
+```
+
+It lands in `~/.axon/plugins/axon-overlay`; open/close it with its
+`waybar-toggle.sh` (bind it to a key or a Waybar button). On macOS and Windows
+the same plugin builds the Tauri app (menu-bar / tray icon).
+
+---
+
+## Plugins — the marketplace
+
+`/plugin` (or `/marketplace`) lists the catalogue (`plugins/catalogue.json`,
+plus your own repos in `~/.axon/plugins/catalogue.json`) and installs the one
+you pick into `~/.axon/plugins/<id>`. A plugin is a git repo — or a
+sub-folder of one — with a `plugin.json`; its install steps are shown and run
+only once you confirm, and a failed step keeps the previous version. The core
+only knows a plugin by the **capabilities** it declares: with `ile`, the CLI
+connects to the island; with `notifications`, study reminders pop up there
+instead of as a system notification. Contract and catalogue format:
+[`plugins/README.md`](plugins/README.md).
 
 ---
 
@@ -660,7 +690,7 @@ island's socket protocol and the CLI handlers behind it.
 
 ```
 ai-agent/
-├── install.sh / setup.sh          # Installation & configuration
+├── install.sh / setup.sh / setup.ps1   # Installation (Linux, macOS / Windows)
 ├── configs/base.yaml
 ├── .env.sample
 ├── AXON.md                        # (create this) Auto-injected project context

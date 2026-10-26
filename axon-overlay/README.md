@@ -93,9 +93,35 @@ Sorties vers Axon : `commande`, `demander_commandes`, `reponse_demande`. Une dem
 
 `pret`, `mode`, `ouvrir` restent locaux à `overlay.py`. La démo est effacée au premier événement réel. `integration_axon.py` reste un exemple de branchement, pas un programme autonome. Le cœur peut charger `pont_axon.py` depuis le plugin, sans en copier le code ailleurs.
 
+## Hôtes par système
+
+La page (`ui/`) et le protocole sont communs. Seul l’hôte natif change :
+
+| Système | Hôte | Ouvrir / masquer | Verre |
+|---|---|---|---|
+| Linux (Wayland) | `overlay.py` (GTK4 + layer-shell) | module Waybar, `waybar-toggle.sh` | flou du compositeur |
+| macOS | `src-tauri/` (Tauri 2) | icône de la barre des menus, ⌘⇧Espace | Liquid Glass (macOS 26), flou HUD avant |
+| Windows | `src-tauri/` (Tauri 2) | icône de la zone de notification, Ctrl+Maj+Espace | Mica (Windows 11), Acrylic (Windows 10) |
+
+Construire l’hôte Tauri, sur le système visé :
+
+```bash
+npm ci
+npm run shell:build      # .app / .dmg sous macOS, installeur NSIS / MSI sous Windows
+npm run shell:dev        # lancer sans empaqueter
+```
+
+Prérequis : Rust stable ; Xcode Command Line Tools (macOS) ; Visual Studio Build Tools et WebView2 (Windows, fourni avec Windows 11). Les icônes se régénèrent avec `npm run shell:icones`.
+
+Les deux canaux (`overlay` pour la session CLI, `controle` pour les rappels et la bascule) suivent le même contrat sur tous les systèmes — voir `src/infra/canal_overlay.py` dans le cœur : socket Unix sous Linux et macOS, TCP local à jeton sous Windows.
+
+Le démon des rappels se lance avec la session : `ops/systemd/axon-cron.service` (Linux), `ops/launchd/installer-rappels.sh` (macOS), `ops/windows/installer-rappels.ps1` (Windows).
+
+L’hôte Tauri est compilé et testé sous Linux (canaux, page, rappels) ; ses parties propres à macOS et Windows — verre, barre système, raccourci, position sous la barre — restent à valider sur ces systèmes.
+
 ## Marketplace
 
-Le dossier est autonome et relogeable dans `.axon/plugins/axon-overlay`. `plugin.json` indique version, lanceur, plateformes et dépendances. Le contrat du chargeur marketplace de ton cœur n’a pas été fourni : ce manifeste est une convention locale à y raccorder. Cette livraison ne crée pas de commande `/marketplace install` dans le cœur.
+Le dossier est autonome et relogeable dans `.axon/plugins/axon-overlay`. `plugin.json` décrit, par système, l’hôte, son lanceur ou son paquet, et ses dépendances. Le contrat du chargeur marketplace du cœur reste à définir : ce manifeste est la convention locale à y raccorder.
 
 ## Vérifications
 

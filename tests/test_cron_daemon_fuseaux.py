@@ -36,7 +36,7 @@ def daemon(monkeypatch):
     monkeypatch.setattr(cron_daemon, "deactivate_task", desactivees.append)
     monkeypatch.setattr(cron_daemon, "append_log", lambda *_a: None)
     notifications: list[tuple[str, str]] = []
-    monkeypatch.setattr(cron_daemon, "_notify_desktop", lambda titre, corps: notifications.append((titre, corps)))
+    monkeypatch.setattr(cron_daemon, "notifier", lambda titre, corps, contexte=None: notifications.append((titre, corps)))
     # Jamais le vrai store d'études de la machine dans ces tests.
     monkeypatch.setattr(cron_daemon, "_echeance_du_rappel", lambda _id: None)
     planifie.notifications = notifications
@@ -106,7 +106,7 @@ def test_un_rappel_d_etudes_garde_12_h_de_tolerance_en_cas_de_veille(daemon, mon
 def recap(monkeypatch, tmp_path):
     envoyes: list[tuple[str, str]] = []
     monkeypatch.setattr(cron_daemon._chemins, "dernier_recap_etudes", lambda: tmp_path / "dernier_recap")
-    monkeypatch.setattr(cron_daemon, "_notify_desktop", lambda titre, corps: envoyes.append((titre, corps)))
+    monkeypatch.setattr(cron_daemon, "notifier", lambda titre, corps, contexte=None: envoyes.append((titre, corps)))
     monkeypatch.setattr(cron_daemon, "recap_du_jour", lambda: ("Axon · Études", "• Rendu final — dans 3 jours"))
     return envoyes
 
@@ -137,3 +137,37 @@ def test_pas_de_recapitulatif_avant_6_h(recap, monkeypatch):
         _Horloge.heure = 9
 
     assert recap == []
+
+
+def test_un_rappel_part_dans_l_ile_quand_elle_ecoute(monkeypatch, tmp_path):
+    """L'île d'abord, si son plugin est installé ; sans elle, une notification
+    système (dunst)."""
+    import json
+    import socket
+    import subprocess
+
+    from src.plugins import registre
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("AXON_STATE_DIR", str(tmp_path / "etat"))
+    registre.dossier_plugin("axon-overlay").mkdir(parents=True)
+    registre.enregistrer(registre.Installe(id="axon-overlay", version="0.2.0", capacites=("notifications",),
+                                           source={}, commit="", installe_le=""))
+    (tmp_path / "axon").mkdir()
+    serveur = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    serveur.bind(str(tmp_path / "axon" / "controle.sock"))
+    serveur.listen(1)
+    lances = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: lances.append(a))
+    try:
+        cron_daemon.notifier("Axon · Études", "• Rendu CDS")
+        client, _ = serveur.accept()
+        recu = json.loads(client.makefile().readline())
+        client.close()
+    finally:
+        serveur.close()
+    assert recu["type"] == "rappel" and recu["titre"] == "Axon · Études"
+    assert lances == []
+
+    cron_daemon.notifier("Axon · Études", "• Rendu CDS")   # île arrêtée
+    assert lances and lances[0][0][0] == "notify-send"

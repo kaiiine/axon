@@ -116,8 +116,11 @@ def run_cli(graph):
     from src.ui.pont_overlay import pont
     from src.ui.completer import _COMMANDS
 
-    # Seule la vraie session se connecte à l'île (voir `PontOverlay.activer`).
-    pont.activer()
+    # Seule la vraie session se connecte à l'île (voir `PontOverlay.activer`),
+    # et seulement si un plugin installé la fournit (`/plugin`).
+    from src.plugins import registre
+    if registre.avec_capacite("ile"):
+        pont.activer()
 
     def _envoyer_commandes() -> None:
         pont.envoyer(type="commandes", liste=[{"cmd": c, "desc": d} for c, d in _COMMANDS])

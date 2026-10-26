@@ -27,6 +27,7 @@ from langchain_core.documents import Document
 from src.infra import chemins as _chemins
 from src.infra.pont_fr_en import pont_linguistique
 from src.infra.retrieval import build_catalog_document, unique
+from src.orchestrator.routage.skills_lies import groupes_neutralises
 
 
 @dataclass(frozen=True)
@@ -787,10 +788,11 @@ def _build_documents(tools: list) -> list[Document]:
     description, rien d'autre — aucune phrase d'ancrage. Un outil pèse donc
     exactement un document, comme tous les autres.
     """
+    neutralises = groupes_neutralises()
     docs = [
         Document(page_content=spec.document(name),
                  metadata={"source": _GROUP_SOURCE, "group": name})
-        for name, spec in TOOL_GROUPS.items()
+        for name, spec in TOOL_GROUPS.items() if name not in neutralises
     ]
     docs += [
         Document(page_content=f"{t.name}: {t.description}",
@@ -971,6 +973,8 @@ class ToolRetriever:
 
     def get(self, query: str) -> list:
         ranked, rangs = self._rank_groups_detaille(query)
+        neutralises = groupes_neutralises()
+        ranked = [g for g in ranked if g not in neutralises]
         self.groupe_de_tete = ranked[0] if ranked else None
         groups = ranked + [g for g in _PINNED_GROUPS if g not in ranked]
 

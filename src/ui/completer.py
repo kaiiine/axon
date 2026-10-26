@@ -36,6 +36,8 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/debug",             "active/désactive le mode debug"),
     ("/dump",              "affiche tous les messages du thread"),
     ("/mcp",               "serveurs MCP — list · add · test · tools · refresh · restart…"),
+    ("/plugin",            "marketplace des plugins — list · install · update · remove"),
+    ("/marketplace",       "choisir un plugin à installer"),
     ("/graph",             "graphe de code — Tab propose les projets, puis --update"),
     ("/keys",              "état des clés API (multi-comptes) · /keys reset pour tout remettre sain"),
     ("q / exit",           "quitte Axon"),

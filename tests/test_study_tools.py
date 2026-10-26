@@ -310,3 +310,41 @@ def test_supprimer_un_suivi_desactive_ses_rappels(etude):
 
     assert "supprimé" in confirmation and "2 rappel" in confirmation
     assert sum(t["active"] for t in get_tasks()) == 0
+
+
+def test_une_echeance_trop_proche_pour_j7_j3_j1_recoit_quand_meme_un_rappel(etude):
+    """Échéance créée la veille : J-7, J-3 et J-1 sont déjà passés. Avant, aucun
+    rappel n'était programmé et rien ne prévenait le jour J."""
+    sid = _iv(etude.etude_creer_suivi, titre="CDS", type="projet").split("`")[1]
+    demain = (date.today() + timedelta(days=1)).isoformat()
+    eid = _iv(etude.etude_ajouter_echeance, suivi_id=sid, titre="Suivi de projet", type="rendu_projet",
+              date=demain).split("`")[1]
+    from src.agents.study.store import trouver_echeance
+
+    confirmation = _iv(etude.etude_planifier_rappel_echeance, suivi_id=sid, echeance_id=eid,
+                       offsets_jours=[7, 3])
+
+    assert "échéance proche" in confirmation
+    rappels = trouver_echeance(eid)[1]["rappels"]
+    assert len(rappels) == 1
+    assert rappels[0]["quand"].startswith(demain)          # le jour J, à 9h
+
+
+def test_une_echeance_deja_passee_ne_recoit_aucun_rappel(etude):
+    sid = _iv(etude.etude_creer_suivi, titre="CDS", type="projet").split("`")[1]
+    hier = (date.today() - timedelta(days=1)).isoformat()
+    eid = _iv(etude.etude_ajouter_echeance, suivi_id=sid, titre="Vieux rendu", type="rendu_projet",
+              date=hier).split("`")[1]
+    confirmation = _iv(etude.etude_planifier_rappel_echeance, suivi_id=sid, echeance_id=eid)
+    assert "déjà passée" in confirmation
+
+
+def test_une_echeance_sans_type_est_un_jalon_autre(etude):
+    """Vécu : quatre appels ratés d'affilée parce que le modèle omettait `type`
+    pour un jalon intermédiaire — autant de tours, autant de risques de panne."""
+    sid = _iv(etude.etude_creer_suivi, titre="CDS", type="projet").split("`")[1]
+    dans_3j = (date.today() + timedelta(days=3)).isoformat()
+    confirmation = _iv(etude.etude_ajouter_echeance, suivi_id=sid, titre="Revue du design UI", date=dans_3j)
+    eid = confirmation.split("`")[1]
+    from src.agents.study.store import trouver_echeance
+    assert trouver_echeance(eid)[1]["type"] == "autre"

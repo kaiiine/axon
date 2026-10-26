@@ -118,7 +118,7 @@ def _download_url(url: str, dest: Path, timeout: int = 15) -> bool:
 
 def _search_photos(query: str, count: int) -> list[dict]:
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
         results = []
         with DDGS() as ddgs:
             for r in ddgs.images(

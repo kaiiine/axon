@@ -56,7 +56,7 @@ def valider(state: dict) -> dict:
         questions=(
             Question(texte="Ce plan te convient ?",
                      choix=(ABANDONNER, PRECISER, EXECUTER), affirmatif=EXECUTER),
-            Question(texte="Que faut-il changer ?"),
+            Question(texte="Que faut-il changer ?", si=PRECISER),
         ),
     ))
 

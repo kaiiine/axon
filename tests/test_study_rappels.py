@@ -90,3 +90,28 @@ def test_un_rappel_d_une_echeance_passee_ou_annulee_ne_dit_plus_rien(etudes):
     assert rappels.echeance_du_rappel("cron_passe") is None
     assert rappels.echeance_du_rappel("cron_annule") is None
     assert rappels.echeance_du_rappel("cron_inconnu") is None
+
+
+def test_le_recap_signale_une_echeance_en_retard_jamais_rendue(etudes):
+    """Une échéance passée encore « à venir » sortait du récap en silence : PC
+    éteint le jour J, plus jamais rien ne la mentionnait."""
+    store, rappels = etudes
+    suivi = store.creer_suivi("Conseil des Sages", "projet")
+    store.ajouter_echeance(suivi["id"], "Suivi de projet", "rendu_projet", _dans(-5))
+    faite = store.ajouter_echeance(suivi["id"], "Ancien rendu", "rendu_projet", _dans(-3))
+    store.maj_echeance(suivi["id"], faite["id"], statut="passee")
+    store.ajouter_echeance(suivi["id"], "Préhistoire", "rendu_projet", _dans(-90))
+
+    titre, corps = rappels.recap_du_jour()
+    assert corps == "• Suivi de projet (Conseil des Sages) — en retard de 5 j"
+
+
+def test_le_demon_donne_son_genre_a_chaque_tache(etudes, monkeypatch):
+    store, rappels = etudes
+    import src.cron_daemon as cron_daemon
+    suivi = store.creer_suivi("CDS", "projet")
+    echeance = store.ajouter_echeance(suivi["id"], "Rendu", "rendu_projet", _dans(3))
+    store.ajouter_rappel_echeance(suivi["id"], echeance["id"], "cron_rendu", "x", 3)
+    assert cron_daemon._contexte_de_tache("cron_rendu") == {
+        "genre": "echeance", "suivi_id": suivi["id"], "echeance_id": echeance["id"]}
+    assert cron_daemon._contexte_de_tache("cron_meteo") == {"genre": "tache"}

@@ -80,6 +80,24 @@ TRANSIENT_MARKERS = (
 
 MAX_TRANSIENT_RETRIES = 3
 
+#: Un quota sans autre clé où se replier : souvent une limite par seconde ou
+#: par minute (l'offre gratuite de Mistral), qu'une courte attente lève.
+MAX_ATTENTES_QUOTA = 2
+DELAI_QUOTA_S = 2.0
+
+#: Une panne SERVEUR (5xx) qui se répète à l'identique sur la même requête
+#: n'est plus une panne au hasard : c'est la réponse du modèle qui fait échouer
+#: le serveur (vécu avec gpt-oss sur Ollama Cloud — quatre 500 d'affilée sur un
+#: long texte suivi d'un appel d'outil). Réémettre la même requête ne change
+#: rien ; une consigne en plus change la requête, donc la réponse.
+_PANNE_SERVEUR = ("internal server error", "500 server error", "502", "bad gateway",
+                  "503", "service unavailable", "504", "gateway timeout")
+_RELANCE_SERVEUR = (
+    "[SYSTEME] Le serveur du modèle a échoué plusieurs fois de suite sur ta "
+    "dernière réponse. Recommence plus sobrement : si une action reste à faire, "
+    "appelle directement l'outil suivant, sans long texte avant ; sinon, réponds "
+    "brièvement.")
+
 # Un dépassement de contexte se reconnaît au vocabulaire du provider, faute de
 # code d'erreur commun.
 _CONTEXT_MARKERS = ("context", "length", "token")
@@ -96,6 +114,14 @@ class Outcome:
     working: list
     removals: list = field(default_factory=list)
     summary: Any | None = None
+
+
+def modele_hors_offre(exc: Exception) -> bool:
+    """Un 429 dont la limite est ZÉRO : le modèle n'est pas inclus dans l'offre
+    du compte (Mistral répond ainsi plutôt que par un 403). Attendre ne sert à
+    rien — seul un autre modèle passe."""
+    entetes = getattr(getattr(exc, "response", None), "headers", None) or {}
+    return entetes.get("x-ratelimit-limit-req-minute") == "0"
 
 
 def classify(exc: Exception) -> str:
@@ -150,8 +176,8 @@ def invoke_with_recovery(
     except Exception:
         key = ""
 
-    transient_retries = 0
-    capped = compressed = degraded = stripped_tools = False
+    transient_retries = attentes_quota = 0
+    capped = compressed = degraded = stripped_tools = relance_serveur = False
     removals: list = []
     summary = None
     origine = list(working)
@@ -223,8 +249,20 @@ def invoke_with_recovery(
                     # « supprime ces fichiers » produit un texte plausible au
                     # lieu d'une action. Face à un réseau qui reste coupé, une
                     # erreur franche vaut mieux qu'une réponse qui fait semblant.
-                    _log_failure(provider, exc, "retry", False)
-                    raise
+                    #
+                    # Une exception, qui GARDE les outils : une panne serveur
+                    # répétée à l'identique vient de la requête elle-même (voir
+                    # `_PANNE_SERVEUR`) — une seule relance, avec une consigne.
+                    serveur = any(m in str(exc).lower() for m in _PANNE_SERVEUR)
+                    if relance_serveur or not serveur:
+                        _log_failure(provider, exc, "retry", False)
+                        raise
+                    relance_serveur = True
+                    transient_retries = MAX_TRANSIENT_RETRIES   # une seule tentative de plus
+                    notify("le serveur échoue toujours sur cette réponse — nouvelle formulation…")
+                    _log_failure(provider, exc, "reformulation", True)
+                    working = working + [SystemMessage(content=_RELANCE_SERVEUR)]
+                    continue
                 notify(f"panne passagère — reprise {transient_retries}/{MAX_TRANSIENT_RETRIES}…")
                 sleep(2 ** (transient_retries - 1))
                 _log_failure(provider, exc, "retry", True)
@@ -235,6 +273,13 @@ def invoke_with_recovery(
                 if _basculer():
                     notify(f"quota atteint sur {provider} — clé suivante…")
                     _log_failure(precedent, exc, "key_rotate", True)
+                    continue
+                if attentes_quota < MAX_ATTENTES_QUOTA and not modele_hors_offre(exc):
+                    attentes_quota += 1
+                    delai = DELAI_QUOTA_S * attentes_quota
+                    notify(f"quota atteint sur {provider} — nouvel essai dans {delai:.0f} s…")
+                    _log_failure(provider, exc, "attente", True)
+                    sleep(delai)
                     continue
                 _log_failure(provider, exc, "none", False)
                 raise

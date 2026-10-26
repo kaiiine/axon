@@ -78,7 +78,7 @@ it('une erreur de raccourci affiche un état d’erreur avec reprise',async()=>{
 });
 it('« Autre (préciser) » révèle un champ juste à sa place et y met le focus',async()=>{
  reset();const post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};const target=document.createElement('div');document.body.append(target);const app=mount(App,{target});await tick();
- receive({type:'connexion',connecte:true});receive({type:'demande',id:1,questions:[{texte:'Quel format ?',choix:['JSON','CSV']}]});await tick();
+ receive({type:'connexion',connecte:true});navigate('chat');receive({type:'demande',id:1,questions:[{texte:'Quel format ?',choix:['JSON','CSV']}]});await tick();
  const buttons=[...target.querySelectorAll('.choices button')].map(b=>b.textContent);
  expect(buttons).toEqual(['JSON','CSV','Autre (préciser)']);
  const autre=[...target.querySelectorAll('.choices button')].find(b=>b.textContent==='Autre (préciser)') as HTMLButtonElement;
@@ -94,7 +94,7 @@ it('« Autre (préciser) » révèle un champ juste à sa place et y met le focu
 });
 it('un picker à choix fermé (libre:false) ne propose pas « Autre »',async()=>{
  reset();window.webkit={messageHandlers:{axon:{postMessage:vi.fn()}}};const target=document.createElement('div');document.body.append(target);const app=mount(App,{target});await tick();
- receive({type:'connexion',connecte:true});receive({type:'demande',id:1,questions:[{texte:'backend LLM',choix:['groq','ollama'],libre:false}]});await tick();
+ receive({type:'connexion',connecte:true});navigate('chat');receive({type:'demande',id:1,questions:[{texte:'backend LLM',choix:['groq','ollama'],libre:false}]});await tick();
  const buttons=[...target.querySelectorAll('.choices button')].map(b=>b.textContent);
  expect(buttons).toEqual(['groq','ollama']);
  expect(target.querySelector('#freeform-input')).toBeNull();

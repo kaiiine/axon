@@ -2,14 +2,87 @@
   "id": "axon-overlay",
   "name": "Axon Overlay",
   "version": "0.2.0",
-  "description": "Overlay GTK/WebKit pour Axon, interface Svelte et TypeScript.",
+  "description": "L'île d'Axon : demandes, rappels et conversation dans la barre du système. Interface Svelte et TypeScript.",
   "kind": "desktop-overlay",
-  "entrypoint": "lancer.sh",
-  "toggle": "waybar-toggle.sh",
-  "platforms": ["linux-wayland"],
+  "capacites": [
+    "ile",
+    "notifications"
+  ],
   "frontend": "ui/index.html",
-  "bridge": "pont_axon.py",
   "protocol": "axon-overlay-jsonl-v1",
-  "requirements": ["python3", "python-gobject", "gtk4", "gtk4-layer-shell", "webkitgtk-6.0"],
-  "manifest_note": "Métadonnées locales : à mapper au contrat de la marketplace Axon lorsqu’il sera défini."
+  "canaux": {
+    "overlay": "session CLI, un seul client",
+    "controle": "messages ponctuels : rappel, basculer"
+  },
+  "platforms": {
+    "linux-wayland": {
+      "host": "gtk",
+      "entrypoint": "lancer.sh",
+      "toggle": "waybar-toggle.sh",
+      "requirements": [
+        "python3",
+        "python-gobject",
+        "gtk4",
+        "gtk4-layer-shell",
+        "webkitgtk-6.0"
+      ],
+      "commandes": [
+        "npm",
+        "/usr/bin/python3"
+      ],
+      "installation": [
+        [
+          "npm",
+          "ci"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    "macos": {
+      "host": "tauri",
+      "artifact": "src-tauri/target/release/bundle/macos/Axon.app",
+      "minimum": "12.0",
+      "acces": "icône de la barre des menus, ⌘⇧Espace",
+      "commandes": [
+        "npm",
+        "cargo"
+      ],
+      "installation": [
+        [
+          "npm",
+          "ci"
+        ],
+        [
+          "npm",
+          "run",
+          "shell:build"
+        ]
+      ]
+    },
+    "windows": {
+      "host": "tauri",
+      "artifact": "src-tauri/target/release/bundle/nsis",
+      "minimum": "10",
+      "acces": "icône de la zone de notification, Ctrl+Maj+Espace",
+      "commandes": [
+        "npm",
+        "cargo"
+      ],
+      "installation": [
+        [
+          "npm",
+          "ci"
+        ],
+        [
+          "npm",
+          "run",
+          "shell:build"
+        ]
+      ]
+    }
+  }
 }

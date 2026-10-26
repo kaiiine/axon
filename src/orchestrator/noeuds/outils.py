@@ -10,6 +10,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import ToolNode
 
 from src.orchestrator.modele.resilience import tool_error_to_message
+from src.orchestrator.noeuds.ancrage_adresses import refus_adresses_inventees
 
 def _refus_mode_plan(tool_calls: list) -> list[ToolMessage]:
     """Le mode plan retirait les outils d'écriture de la LIAISON seulement.
@@ -62,7 +63,7 @@ class CachedToolNode:
             return {"messages": []}
         # Un lot peut mêler une lecture et une écriture : refuser le lot entier
         # laisserait des `tool_call` sans réponse, ce que les providers rejettent.
-        refus = _refus_mode_plan(tool_calls)
+        refus = _refus_mode_plan(tool_calls) + refus_adresses_inventees(tool_calls, messages)
         if refus:
             bloques = {m.tool_call_id for m in refus}
             tool_calls = [tc for tc in tool_calls if tc["id"] not in bloques]

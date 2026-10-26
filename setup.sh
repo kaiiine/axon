@@ -47,579 +47,115 @@ banner() {
     echo ""
 }
 
-# ── Helpers .env ──────────────────────────────────────────────
-
-# Lit la valeur d'une clé dans .env (retourne "" si absente)
-env_get() {
-    local key="$1"
-    grep -E "^${key}=" .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo ""
+# ── Configuration ─────────────────────────────────────────────
+# Le menu des intégrations est commun à setup.sh et setup.ps1 :
+# src/installation/configuration.py (bibliothèque standard uniquement).
+configurer() {
+    local python
+    python="$(dossier_venv)/bin/python"
+    [[ -x "$python" ]] || python="python3"
+    "$python" -m src.installation.configuration "$@"
 }
 
-# Écrit ou met à jour une clé dans .env
+# Les modèles locaux : l'embedding (requis), un LLM local (optionnel).
+installer_modeles_ollama() {
+    step "Modèles Ollama"
 
-env_set() {
-    local key="$1" value="$2" tmp ligne trouve=0
+    if ! command -v ollama &>/dev/null; then
+        warn "Ollama absent — modèles ignorés. Relance le setup une fois Ollama installé."
+        return
+    fi
+    if ! ollama list &>/dev/null 2>&1; then
+        info "Démarrage d'Ollama en arrière-plan..."
+        ollama serve &>/dev/null &
+        sleep 3
+    fi
 
-    if [[ ! -f .env ]]; then
-        printf '%s=%s\n' "$key" "$value" > .env
+    if ollama list 2>/dev/null | grep -q "nomic-embed-text"; then
+        ok "nomic-embed-text (embedding) déjà présent"
+    else
+        info "Téléchargement de nomic-embed-text (~274 MB, requis)..."
+        ollama pull nomic-embed-text
+        ok "nomic-embed-text prêt"
+    fi
+
+    echo ""
+    if ollama list 2>/dev/null | grep -q "qwen2.5:7b"; then
+        ok "qwen2.5:7b déjà présent"
+    else
+        echo -e "  ${DIM}Backend local optionnel — utile si tu n'as pas accès au cloud${NC}"
+        read -rp "  $(echo -e "${ORANGE}?${NC}") Télécharger qwen2.5:7b pour le backend local ? [o/N] " pull_local
+        if [[ "$pull_local" =~ ^[oOyY]$ ]]; then
+            info "Téléchargement de qwen2.5:7b (~4.4 GB)..."
+            ollama pull qwen2.5:7b
+            ok "qwen2.5:7b prêt"
+        fi
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────
+#  RAPPELS ET ÎLE
+# ──────────────────────────────────────────────────────────────
+
+# Le démon des rappels (src/cron_daemon.py) avec la session : sans lui, aucun
+# rappel d'échéance ni récapitulatif d'études ne part.
+installer_rappels() {
+    step "Démon des rappels"
+    local venv="$1"
+    case "$(uname -s)" in
+        Linux)
+            if ! command -v systemctl &>/dev/null || ! systemctl --user show-environment &>/dev/null; then
+                warn "systemd utilisateur indisponible — lance le démon à la main :"
+                warn "  $venv/bin/python -m src.cron_daemon"
+                return
+            fi
+            # L'unité du dépôt vise ~/Documents/projets-perso/axon et .venv :
+            # on l'écrit avec le vrai dossier et le vrai venv.
+            mkdir -p "$HOME/.config/systemd/user"
+            sed -e "s|%h/Documents/projets-perso/axon/.venv|$(pwd)/$venv|" \
+                -e "s|%h/Documents/projets-perso/axon|$(pwd)|" \
+                ops/systemd/axon-cron.service > "$HOME/.config/systemd/user/axon-cron.service"
+            systemctl --user daemon-reload
+            systemctl --user enable --now axon-cron.service &>/dev/null \
+                && ok "axon-cron.service actif (démarre avec la session graphique)" \
+                || warn "axon-cron.service installé mais pas démarré — systemctl --user status axon-cron"
+            ;;
+        Darwin)
+            sh ops/launchd/installer-rappels.sh && ok "LaunchAgent fr.axon.rappels actif"
+            ;;
+        *)
+            warn "Système non géré ici — Windows : ops\\windows\\installer-rappels.ps1"
+            ;;
+    esac
+}
+
+# L'île est un plugin (axon-overlay), installé par la marketplace depuis ce
+# dépôt : GTK sous Linux/Wayland, l'app Tauri sous macOS et Windows.
+installer_ile() {
+    step "Île (plugin axon-overlay)"
+    echo -e "  ${DIM}Demandes, rappels d'études et réponses en direct dans la barre du système.${NC}"
+    read -rp "  $(echo -e "${ORANGE}?${NC}") Installer l'île ? [o/N] " rep
+    if [[ ! "$rep" =~ ^[oOyY]$ ]]; then
+        info "Plus tard, dans Axon : /plugin"
         return
     fi
 
-    tmp=$(mktemp) || return 1
-    while IFS= read -r ligne || [[ -n "$ligne" ]]; do
-        if [[ "$ligne" == "${key}="* ]]; then
-            printf '%s=%s\n' "$key" "$value"
-            trouve=1
-        else
-            printf '%s\n' "$ligne"
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        local manquants=()
+        /usr/bin/python3 -c "import gi" &>/dev/null || manquants+=("python-gobject")
+        /usr/bin/python3 -c "import gi; gi.require_version('Gtk', '4.0')" &>/dev/null || manquants+=("gtk4")
+        /usr/bin/python3 -c "import gi; gi.require_version('WebKit', '6.0')" &>/dev/null || manquants+=("webkitgtk-6.0")
+        [[ -e /usr/lib/libgtk4-layer-shell.so ]] || manquants+=("gtk4-layer-shell")
+        if (( ${#manquants[@]} )); then
+            warn "Dépendances système manquantes : ${manquants[*]}"
+            warn "  sudo pacman -S ${manquants[*]}"
+            return
         fi
-    done < .env > "$tmp"
-
-    [[ $trouve -eq 0 ]] && printf '%s=%s\n' "$key" "$value" >> "$tmp"
-    mv "$tmp" .env
-}
-
-# Affiche le statut d'une clé : ✓ configurée / ⚠ manquante
-env_status() {
-    local key="$1" label="$2"
-    local val
-    val=$(env_get "$key")
-    if [[ -n "$val" && "$val" != *"..."* && "$val" != "your_"* ]]; then
-        ok "${label}"
-    else
-        warn "${label} ${DIM}(non configuré)${NC}"
-    fi
-}
-
-# Demande une valeur, propose de conserver l'existante
-prompt_key() {
-    local key="$1" label="$2" hint="$3"
-    local current
-    current=$(env_get "$key")
-
-    echo ""
-    echo -e "  ${ORANGE}${label}${NC}"
-    echo -e "  ${DIM}${hint}${NC}"
-    if [[ -n "$current" && "$current" != *"..."* && "$current" != "your_"* ]]; then
-        echo -e "  ${DIM}Valeur actuelle : ${current:0:12}…  (Entrée pour conserver)${NC}"
-    fi
-    read -rp "  $(echo -e "${ORANGE}>${NC}") " input
-    if [[ -n "$input" ]]; then
-        env_set "$key" "$input"
-        ok "${key} enregistré"
-    else
-        [[ -n "$current" ]] && ok "${key} conservé" || warn "${key} ignoré"
-    fi
-}
-
-# ──────────────────────────────────────────────────────────────
-#  CONFIGURATION DES SERVICES
-# ──────────────────────────────────────────────────────────────
-
-config_tavily() {
-    step "Tavily — Recherche web"
-    echo -e "  ${DIM}Tavily permet la recherche web. Requis pour le tool web_research_report.${NC}"
-    echo -e "  ${DIM}Créer un compte gratuit → https://app.tavily.com${NC}"
-    echo -e "  ${DIM}Settings → API Keys → Copy${NC}"
-    prompt_key "TAVILY_API_KEY" "Clé API Tavily" "Format : tvly-xxxxxxxxxxxxxxxxxxxx"
-}
-
-config_groq() {
-    step "Groq — Backend LLM cloud rapide"
-    echo -e "  ${DIM}Groq donne accès à LLaMA, Qwen, DeepSeek avec une latence très faible.${NC}"
-    echo -e "  ${DIM}Créer un compte → https://console.groq.com${NC}"
-    echo -e "  ${DIM}API Keys → Create API Key → Copy${NC}"
-    prompt_key "GROQ_API_KEY" "Clé API Groq" "Format : gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-}
-
-config_mistral() {
-    step "Mistral — Backend LLM européen"
-    echo -e "  ${DIM}Mistral fournit les modèles Mistral et Codestral (spécialisé code).${NC}"
-    echo -e "  ${DIM}Créer un compte → https://console.mistral.ai${NC}"
-    echo -e "  ${DIM}API Keys → Create new key → Copy${NC}"
-    prompt_key "MISTRAL_API_KEY" "Clé API Mistral" "Format : xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-}
-
-config_nvidia() {
-    step "NVIDIA — Backend LLM cloud (NIM)"
-    echo -e "  ${DIM}NVIDIA NIM donne accès à des modèles hébergés (Llama, DeepSeek, Nemotron…).${NC}"
-    echo -e "  ${DIM}Créer un compte → https://build.nvidia.com${NC}"
-    echo -e "  ${DIM}Choisir un modèle → « Get API Key » → Copy${NC}"
-    prompt_key "NVIDIA_API_KEY" "Clé API NVIDIA" "Format : nvapi-xxxxxxxxxxxxxxxxxxxx"
-    echo -e "  ${DIM}Modèle utilisé : réglable dans configs/base.yaml (nvidia.model) ou /model dans Axon.${NC}"
-}
-
-config_ollama_cloud() {
-    step "Ollama Cloud — Backend cloud (optionnel)"
-    echo -e "  ${DIM}Permet d'utiliser des modèles cloud via Ollama (ex: kimi-k2, qwen3-next).${NC}"
-    echo -e "  ${DIM}Compte Ollama → https://ollama.com/settings/api-keys${NC}"
-    echo ""
-    prompt_key "OLLAMA_API_KEY" "Clé API Ollama Cloud" "Format : ollama_xxxx  (laisser vide si tu utilises ollama signin)"
-
-    # Ask if the user wants to sign in via the Ollama CLI
-    echo ""
-    echo -e "  ${ORANGE}Veux-tu aussi te connecter via la CLI Ollama ? (ollama signin)${NC}"
-    echo -e "  ${DIM}Utile si tu utilises des modèles cloud sans clé API.${NC}"
-    read -rp "  $(echo -e "${ORANGE}>${NC}") [o/N] " signin_choice
-    if [[ "$signin_choice" =~ ^[oOyY]$ ]]; then
-        # Check ollama CLI is available
-        if ! command -v ollama &>/dev/null; then
-            warn "La CLI Ollama n'est pas installée."
-            echo -e "  ${DIM}Installe-la avec :${NC}"
-            echo -e "  ${ORANGE}  curl -fsSL https://ollama.com/install.sh | sh${NC}"
-            echo ""
-            read -rp "  $(echo -e "${ORANGE}>${NC}") Lancer l'installation maintenant ? [o/N] " install_choice
-            if [[ "$install_choice" =~ ^[oOyY]$ ]]; then
-                info "Installation de la CLI Ollama..."
-                curl -fsSL https://ollama.com/install.sh | sh
-                if ! command -v ollama &>/dev/null; then
-                    warn "Installation échouée. Relance le setup après avoir installé Ollama manuellement."
-                    return
-                fi
-                ok "Ollama CLI installée."
-            else
-                warn "Connexion ignorée. Installe Ollama puis relance le setup."
-                return
-            fi
-        fi
-
-        # Logout first to clean any stale session
-        info "Déconnexion préalable (ollama logout)..."
-        ollama logout 2>/dev/null || true
-
-        # Sign in
-        info "Connexion à Ollama (ollama signin)..."
-        if ollama signin; then
-            ok "Connecté à Ollama Cloud."
-        else
-            warn "Connexion échouée. Vérifie tes identifiants et réessaie."
-        fi
-    fi
-}
-
-config_gemini() {
-    step "Google Gemini — Backend LLM gratuit (1M tokens de contexte)"
-    echo -e "  ${DIM}Gemini 2.5 Flash est gratuit avec 15 req/min et 1 500 req/jour.${NC}"
-    echo -e "  ${DIM}C'est le backend recommandé si tu veux éviter les quotas Groq/Ollama.${NC}"
-    echo ""
-    echo -e "  ${ORANGE}Étapes :${NC}"
-    echo -e "  ${DIM}1. Aller sur https://aistudio.google.com/apikey${NC}"
-    echo -e "  ${DIM}2. Cliquer sur 'Create API key'${NC}"
-    echo -e "  ${DIM}3. Copier la clé générée${NC}"
-    echo ""
-    echo -e "  ${DIM}Modèles disponibles :${NC}"
-    echo -e "  ${DIM}  gemini-2.5-flash           → recommandé (rapide, gratuit)${NC}"
-    echo -e "  ${DIM}  gemini-2.5-pro             → meilleur, quota limité${NC}"
-    echo -e "  ${DIM}  gemini-3.1-flash-lite-preview → économique, rapide${NC}"
-    prompt_key "GEMINI_API_KEY" "Clé API Gemini" "Format : AIzaSy..."
-}
-
-config_slack() {
-    step "Slack — Intégration workspace"
-    echo -e "  ${DIM}Permet de lire les canaux, DMs, mentions et d'envoyer des messages.${NC}"
-    echo ""
-    echo -e "  ${ORANGE}Étapes :${NC}"
-    echo -e "  ${DIM}1. Aller sur https://api.slack.com/apps${NC}"
-    echo -e "  ${DIM}2. Créer une nouvelle app → From scratch${NC}"
-    echo -e "  ${DIM}3. OAuth & Permissions → User Token Scopes, ajouter :${NC}"
-    echo -e "  ${DIM}   channels:read    channels:history${NC}"
-    echo -e "  ${DIM}   groups:read      groups:history${NC}"
-    echo -e "  ${DIM}   im:read          im:history       im:write${NC}"
-    echo -e "  ${DIM}   mpim:read        mpim:history     mpim:write${NC}"
-    echo -e "  ${DIM}   users:read       search:read      chat:write${NC}"
-    echo -e "  ${DIM}4. Install to Workspace → Copy User OAuth Token${NC}"
-    prompt_key "SLACK_USER_TOKEN" "User Token Slack" "Format : xoxp-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx"
-}
-
-config_google() {
-    step "Google — Gmail · Calendar · Drive · Docs · Slides"
-    echo -e "  ${DIM}Utilise OAuth2 via un fichier de credentials (pas une clé API).${NC}"
-    echo -e "  ${DIM}Le token est sauvegardé automatiquement à ~/.ai-agent/google_token.pickle.${NC}"
-    echo ""
-    echo -e "  ${ORANGE}Étapes :${NC}"
-    echo -e "  ${DIM}1. Aller sur https://console.cloud.google.com${NC}"
-    echo -e "  ${DIM}2. Créer un projet (ou en sélectionner un existant)${NC}"
-    echo -e "  ${DIM}3. APIs & Services → Enable APIs :${NC}"
-    echo -e "  ${DIM}   Gmail API · Google Calendar API · Drive API${NC}"
-    echo -e "  ${DIM}   Docs API · Slides API · Sheets API${NC}"
-    echo -e "  ${DIM}4. APIs & Services → Credentials → Create Credentials${NC}"
-    echo -e "  ${DIM}   → OAuth 2.0 Client ID → Desktop App${NC}"
-    echo -e "  ${DIM}5. Download JSON → renommer en gcp-oauth.keys.json${NC}"
-    echo -e "  ${DIM}6. Placer gcp-oauth.keys.json à la racine du projet${NC}"
-    echo ""
-
-    if [[ -f "gcp-oauth.keys.json" ]]; then
-        ok "gcp-oauth.keys.json déjà présent"
-        echo -e "  ${DIM}Le navigateur s'ouvrira au premier lancement pour l'autorisation OAuth.${NC}"
-    else
-        warn "gcp-oauth.keys.json absent"
-        read -rp "  $(echo -e "${ORANGE}?${NC}") Chemin vers ton fichier OAuth2 JSON (Entrée pour ignorer) : " oauth_path
-        if [[ -n "$oauth_path" && -f "$oauth_path" ]]; then
-            cp "$oauth_path" gcp-oauth.keys.json
-            ok "gcp-oauth.keys.json copié"
-        else
-            warn "Google Services non configurés — à faire manuellement"
-        fi
-    fi
-}
-
-config_user_name() {
-    step "Ton identité"
-    echo -e "  ${DIM}Ton prénom ou alias sera utilisé par Axon pour te répondre personnellement.${NC}"
-    local current
-    current=$(env_get "USER_NAME")
-    echo ""
-    if [[ -n "$current" && "$current" != "Ton Prénom Nom" ]]; then
-        echo -e "  ${DIM}Valeur actuelle : ${current}  (Entrée pour conserver)${NC}"
-    fi
-    read -rp "  $(echo -e "${ORANGE}>  Ton prénom / alias :${NC} ")" input
-    if [[ -n "$input" ]]; then
-        env_set "USER_NAME" "$input"
-        ok "Bonjour, ${input} !"
-    else
-        if [[ -n "$current" && "$current" != "Ton Prénom Nom" ]]; then
-            ok "Conservé : ${current}"
-        else
-            warn "USER_NAME ignoré — modifiable dans .env"
-        fi
-    fi
-}
-
-config_jira() {
-    step "Jira — Gestion de projet"
-    echo -e "  ${DIM}Permet de lire, créer et gérer les tickets de tes projets Jira.${NC}"
-    echo ""
-    echo -e "  ${ORANGE}Étapes :${NC}"
-    echo -e "  ${DIM}1. Aller sur https://id.atlassian.com/manage-profile/security/api-tokens${NC}"
-    echo -e "  ${DIM}2. Create API token → copier la clé${NC}"
-    echo -e "  ${DIM}3. Ton URL Jira = https://ton-domaine.atlassian.net${NC}"
-    echo -e "  ${DIM}   (visible dans la barre d'adresse quand tu ouvres Jira)${NC}"
-    prompt_key "JIRA_URL"     "URL Jira"       "Format : https://ton-domaine.atlassian.net"
-    prompt_key "JIRA_EMAIL"   "Email Atlassian" "Email de ton compte Atlassian"
-    prompt_key "JIRA_API_KEY" "Clé API Jira"   "Format : ATATT3x..."
-}
-
-config_quant() {
-    step "API-Football — Value betting (Winamax)"
-    echo -e "  ${DIM}Permet à Axon de calculer de vraies probabilités (Poisson/Elo) sur les${NC}"
-    echo -e "  ${DIM}matchs et de les comparer aux cotes Winamax pour détecter un edge réel.${NC}"
-    echo -e "  ${DIM}Gratuit : 100 requêtes/jour. Le tier gratuit bloque la saison en cours —${NC}"
-    echo -e "  ${DIM}c'est football-data.org (ci-dessous) qui la couvre, API-Football sert de${NC}"
-    echo -e "  ${DIM}source complémentaire (saisons passées, autres compétitions).${NC}"
-    echo ""
-    echo -e "  ${ORANGE}Étapes :${NC}"
-    echo -e "  ${DIM}1. Aller sur https://www.api-football.com/${NC}"
-    echo -e "  ${DIM}2. Créer un compte gratuit${NC}"
-    echo -e "  ${DIM}3. Dashboard → copier ta clé API (section 'My Access')${NC}"
-    echo ""
-    echo -e "  ${DIM}Winamax ne demande aucune clé — les cotes sont déjà accessibles.${NC}"
-    prompt_key "API_FOOTBALL_KEY" "Clé API-Football" "Format : ta clé depuis le dashboard api-football.com"
-}
-
-config_football_data() {
-    step "football-data.org — Données saison en cours (value betting)"
-    echo -e "  ${DIM}Complète API-Football : couvre la saison EN COURS gratuitement (Ligue 1,${NC}"
-    echo -e "  ${DIM}Premier League...), là où le tier gratuit d'API-Football bloque tout.${NC}"
-    echo -e "  ${DIM}Gratuit : 10 requêtes/minute, 12 compétitions majeures.${NC}"
-    echo ""
-    echo -e "  ${ORANGE}Étapes :${NC}"
-    echo -e "  ${DIM}1. Aller sur https://www.football-data.org/client/register${NC}"
-    echo -e "  ${DIM}2. Créer un compte gratuit (aucune carte bancaire demandée)${NC}"
-    echo -e "  ${DIM}3. La clé API arrive par email — la copier ici${NC}"
-    prompt_key "FOOTBALL_DATA_ORG_KEY" "Clé football-data.org" "Format : ta clé reçue par email"
-}
-
-config_projects_dir() {
-    step "Dossier de projets"
-    echo -e "  ${DIM}Indiquer ton dossier racine de projets permet à l'IA de trouver tes repos git plus vite.${NC}"
-    echo -e "  ${DIM}Laisser vide → l'IA cherchera depuis \$HOME (fonctionne, juste plus lent).${NC}"
-    echo ""
-
-    current=$(env_get "PROJECTS_DIR")
-    if [[ -n "$current" ]]; then
-        echo -e "  ${DIM}Valeur actuelle : $current${NC}"
+        ok "GTK4, gtk4-layer-shell et WebKitGTK présents"
     fi
 
-    # Essayer d'ouvrir un gestionnaire de fichiers graphique
-    chosen=""
-    if command -v zenity &>/dev/null && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-        chosen=$(zenity --file-selection --directory \
-            --title="Sélectionne ton dossier de projets" \
-            --filename="${current:-$HOME/}" 2>/dev/null) || chosen=""
-    elif command -v kdialog &>/dev/null && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-        chosen=$(kdialog --getexistingdirectory "${current:-$HOME}" \
-            --title "Sélectionne ton dossier de projets" 2>/dev/null) || chosen=""
-    fi
-
-    # Fallback texte si pas de GUI
-    if [[ -z "$chosen" ]]; then
-        read -rp "  $(echo -e "${ORANGE}?${NC}") Chemin vers ton dossier de projets (Entrée pour ignorer) : " chosen
-    fi
-
-    if [[ -n "$chosen" && -d "$chosen" ]]; then
-        env_set "PROJECTS_DIR" "$chosen"
-        ok "PROJECTS_DIR → $chosen"
-    else
-        env_set "PROJECTS_DIR" ""
-        warn "Non configuré — l'IA cherchera depuis \$HOME"
-    fi
-}
-
-config_mcp() {
-    step "MCP — serveurs d'outils externes"
-    echo -e "  ${DIM}Axon peut consommer des serveurs MCP tiers (Blender, filesystem, GitHub…).${NC}"
-    echo -e "  ${DIM}Ajouter une capacité = une ligne de configuration, aucun code à écrire.${NC}"
-    echo -e "  ${DIM}Gestion dans Axon : /mcp list · add · test · tools · refresh · restart${NC}"
-
-    # ── 1. uv / uvx ───────────────────────────────────────────
-    echo ""
-    if command -v uvx &>/dev/null; then
-        ok "uvx présent  ${DIM}→ $(command -v uvx)${NC}"
-    else
-        warn "uvx introuvable — nécessaire pour lancer les serveurs MCP distribués par uv"
-        echo -e "  ${DIM}Installeur officiel (ne PAS utiliser pip install uv : la commande uvx${NC}"
-        echo -e "  ${DIM}peut ne pas être créée).${NC}"
-        read -rp "  $(echo -e "${ORANGE}?${NC}") Installer uv maintenant ? [O/n] " rep
-        if [[ ! "$rep" =~ ^[Nn] ]]; then
-            curl -LsSf https://astral.sh/uv/install.sh | sh || warn "Installation d'uv échouée"
-            export PATH="$HOME/.local/bin:$PATH"
-            command -v uvx &>/dev/null && ok "uvx installé → $(command -v uvx)" \
-                || warn "uvx toujours introuvable — ouvre un nouveau shell puis relance"
-        fi
-    fi
-
-    # ── 2. Déclaration du serveur Blender ─────────────────────
-    local cfg="$HOME/.axon/mcp_servers.json"
-    echo ""
-    echo -e "  ${ORANGE}Serveur Blender${NC}"
-    echo -e "  ${DIM}Modélisation 3D, matériaux, animation, rendu, export GLB.${NC}"
-    read -rp "  $(echo -e "${ORANGE}?${NC}") Déclarer le serveur blender dans $cfg ? [O/n] " rep
-    if [[ ! "$rep" =~ ^[Nn] ]]; then
-        # Fusion, jamais d'écrasement : les autres serveurs déjà déclarés sont conservés.
-        local result
-        result=$(python3 - "$cfg" <<'PY'
-import json, pathlib, sys
-
-path = pathlib.Path(sys.argv[1])
-data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-servers = data.setdefault("servers", {})
-
-if "blender" in servers:
-    print("KEPT")
-else:
-    servers["blender"] = {
-        "transport": "stdio",
-        "command": "uvx",
-        "args": ["--python", "3.11", "blender-mcp"],
-        "env": {
-            "BLENDER_HOST": "localhost",
-            "BLENDER_PORT": "9876",
-            "DISABLE_TELEMETRY": "true",
-            "UV_PYTHON_PREFERENCE": "only-managed",
-        },
-        "enabled": True,
-        "timeouts": {"connect_s": 15, "list_tools_s": 15, "call_s": 90},
-        "tool_timeouts": {"execute_blender_code": 180},
-        "reconnect": {"max_retries": 5, "backoff_s": 2, "backoff_factor": 2},
-        "health": {
-            "probe_tool": "get_scene_info",
-            "failure_patterns": [
-                "Could not connect to Blender",
-                "Make sure the Blender addon is running",
-            ],
-            "consecutive_failures_to_degrade": 3,
-        },
-        "capabilities_hint": (
-            "Blender, 3D modeling, mesh manipulation, materials, geometry, animation, "
-            "camera, lighting, rendering, scene editing, GLB export, Python bpy"
-        ),
-        "risk_overrides": {"execute_blender_code": "execute"},
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print("ADDED")
-PY
-        ) || result="FAILED"
-        case "$result" in
-            ADDED)  ok "blender déclaré dans $cfg" ;;
-            KEPT)   ok "blender déjà déclaré — configuration existante conservée" ;;
-            *)      warn "Écriture de $cfg impossible" ;;
-        esac
-    fi
-
-    # ── 3. Addon côté Blender ─────────────────────────────────
-    echo ""
-    echo -e "  ${ORANGE}Addon Blender${NC}  ${DIM}(côté Blender, une seule fois)${NC}"
-    if command -v blender &>/dev/null; then
-        ok "Blender présent  ${DIM}→ $(blender --version 2>/dev/null | head -1)${NC}"
-    else
-        warn "Blender introuvable dans le PATH — installe-le avant d'utiliser ce serveur"
-    fi
-    local addon="$HOME/Téléchargements/addon.py"
-    [[ -d "$HOME/Téléchargements" ]] || addon="$HOME/Downloads/addon.py"
-    read -rp "  $(echo -e "${ORANGE}?${NC}") Télécharger l'addon vers $addon ? [O/n] " rep
-    if [[ ! "$rep" =~ ^[Nn] ]]; then
-        mkdir -p "$(dirname "$addon")"
-        if curl -fsSL -o "$addon" \
-            https://raw.githubusercontent.com/ahujasid/blender-mcp/main/addon.py; then
-            ok "addon.py téléchargé → $addon"
-        else
-            warn "Téléchargement échoué — récupère addon.py sur github.com/ahujasid/blender-mcp"
-        fi
-    fi
-    echo -e "  ${DIM}Dans Blender :${NC}"
-    echo -e "  ${DIM}  1. Edit > Preferences > Add-ons > Install… > choisir addon.py${NC}"
-    echo -e "  ${DIM}  2. Cocher « Interface: Blender MCP »${NC}"
-    echo -e "  ${DIM}  3. Vue 3D > touche N > onglet BlenderMCP > bouton de connexion${NC}"
-    echo -e "  ${DIM}  Blender doit tourner en mode GRAPHIQUE (jamais -b/--background) :${NC}"
-    echo -e "  ${DIM}  l'addon exécute les commandes via la boucle principale.${NC}"
-
-    # ── 4. Sketchfab (optionnel) ──────────────────────────────
-    echo ""
-    echo -e "  ${ORANGE}Sketchfab${NC}  ${DIM}(optionnel — import de modèles 3D existants)${NC}"
-    echo -e "  ${DIM}La clé est lue par BLENDER, pas par Axon : elle ne va pas dans .env.${NC}"
-    echo -e "  ${DIM}L'addon la cherche dans ses préférences, puis la scène, puis la variable${NC}"
-    echo -e "  ${DIM}d'environnement BLENDERMCP_SKETCHFAB_API_KEY — la dernière est la plus sûre :${NC}"
-    echo -e "  ${DIM}elle ne transite jamais par le contexte du modèle.${NC}"
-    local rc="$HOME/.bashrc"
-    [[ -n "${ZSH_VERSION:-}" || "${SHELL:-}" == *zsh ]] && rc="$HOME/.zshrc"
-    if grep -q "BLENDERMCP_SKETCHFAB_API_KEY" "$rc" 2>/dev/null; then
-        ok "BLENDERMCP_SKETCHFAB_API_KEY déjà exportée dans $(basename "$rc")"
-    else
-        read -rp "  $(echo -e "${ORANGE}?${NC}") Clé API Sketchfab (Entrée pour ignorer) : " sk_key
-        if [[ -n "$sk_key" ]]; then
-            printf '\n# blender-mcp — lue par Blender, pas par Axon\nexport BLENDERMCP_SKETCHFAB_API_KEY=%q\n' \
-                "$sk_key" >> "$rc"
-            ok "export ajouté à $rc — relance Blender depuis un nouveau shell"
-        else
-            info "Ignoré — l'import Sketchfab restera indisponible"
-        fi
-    fi
-    echo -e "  ${DIM}Puis dans Blender : onglet BlenderMCP > cocher « Use Sketchfab ».${NC}"
-    echo -e "  ${DIM}Sans cette case, l'addon n'enregistre pas les commandes Sketchfab et${NC}"
-    echo -e "  ${DIM}répond « Unknown command type » — le serveur MCP les annonce pourtant.${NC}"
-
-    echo ""
-    info "Vérification : lance Axon puis ${ORANGE}/mcp test blender${NC}"
-    echo -e "  ${DIM}Si « command resolved » est vide, le PATH d'Axon diffère de ce shell :${NC}"
-    echo -e "  ${DIM}remplace \"command\": \"uvx\" par le chemin absolu dans $cfg.${NC}"
-}
-
-# ──────────────────────────────────────────────────────────────
-#  MENU DE CONFIGURATION
-# ──────────────────────────────────────────────────────────────
-
-show_status() {
-    echo ""
-    echo -e "  ${WHITE}Statut des intégrations :${NC}"
-    echo ""
-    local uname
-    uname=$(env_get "USER_NAME")
-    if [[ -n "$uname" && "$uname" != "Ton Prénom Nom" ]]; then
-        ok "Identité  ${DIM}→ ${uname}${NC}"
-    else
-        warn "Identité  ${DIM}(USER_NAME non configuré)${NC}"
-    fi
-    env_status "TAVILY_API_KEY"  "Tavily    (recherche web)"
-    env_status "GROQ_API_KEY"    "Groq      (LLM cloud)"
-    env_status "GEMINI_API_KEY"  "Gemini    (LLM gratuit — recommandé)"
-    env_status "OLLAMA_API_KEY"  "Ollama Cloud (optionnel)"
-    env_status "NVIDIA_API_KEY"  "NVIDIA    (LLM cloud NIM)"
-    env_status "MISTRAL_API_KEY" "Mistral   (LLM européen · Codestral)"
-    env_status "SLACK_USER_TOKEN" "Slack"
-    env_status "JIRA_API_KEY"    "Jira      (gestion de projet)"
-    env_status "API_FOOTBALL_KEY" "API-Football (value betting Winamax)"
-    env_status "FOOTBALL_DATA_ORG_KEY" "football-data.org (saison en cours)"
-    if [[ -f "gcp-oauth.keys.json" ]]; then
-        ok "Google    (Gmail · Calendar · Drive · Docs · Slides)"
-    else
-        warn "Google    ${DIM}(gcp-oauth.keys.json manquant)${NC}"
-    fi
-    local mcp_cfg="$HOME/.axon/mcp_servers.json"
-    if [[ -f "$mcp_cfg" ]]; then
-        local n
-        n=$(python3 -c "import json,sys;print(len(json.load(open(sys.argv[1])).get('servers',{})))" \
-            "$mcp_cfg" 2>/dev/null || echo 0)
-        if [[ "$n" -gt 0 ]]; then
-            ok "MCP       ${DIM}→ ${n} serveur(s) déclaré(s) · /mcp list dans Axon${NC}"
-        else
-            warn "MCP       ${DIM}(aucun serveur déclaré)${NC}"
-        fi
-    else
-        warn "MCP       ${DIM}(aucun serveur déclaré)${NC}"
-    fi
-    local pdir
-    pdir=$(env_get "PROJECTS_DIR")
-    if [[ -n "$pdir" ]]; then
-        ok "Projets   ${DIM}→ $pdir${NC}"
-    else
-        warn "Projets   ${DIM}(non configuré — recherche depuis \$HOME)${NC}"
-    fi
-    echo ""
-}
-
-config_menu() {
-    while true; do
-        step "Configuration des intégrations"
-        show_status
-
-        echo -e "  ${WHITE}Que veux-tu configurer ?${NC}"
-        echo ""
-        echo -e "  ${ORANGE}1${NC}  Tavily       ${DIM}(recherche web — recommandé)${NC}"
-        echo -e "  ${ORANGE}2${NC}  Gemini       ${DIM}(LLM gratuit — 1M tokens — recommandé)${NC}"
-        echo -e "  ${ORANGE}3${NC}  Groq         ${DIM}(LLM cloud rapide)${NC}"
-        echo -e "  ${ORANGE}4${NC}  Ollama Cloud ${DIM}(optionnel)${NC}"
-        echo -e "  ${ORANGE}5${NC}  NVIDIA       ${DIM}(LLM cloud NIM)${NC}"
-        echo -e "  ${ORANGE}6${NC}  Mistral      ${DIM}(LLM européen · Codestral pour le code)${NC}"
-        echo -e "  ${ORANGE}7${NC}  Slack${NC}"
-        echo -e "  ${ORANGE}8${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
-        echo -e "  ${ORANGE}9${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
-        echo -e "  ${ORANGE}10${NC} Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
-        echo -e "  ${ORANGE}11${NC} API-Football ${DIM}(value betting Winamax)${NC}"
-        echo -e "  ${ORANGE}12${NC} football-data.org ${DIM}(saison en cours, value betting)${NC}"
-        echo -e "  ${ORANGE}13${NC} MCP          ${DIM}(serveurs d'outils externes — Blender, etc.)${NC}"
-        echo -e "  ${ORANGE}a${NC}  Tout configurer"
-        echo -e "  ${ORANGE}q${NC}  Quitter le menu"
-        echo ""
-
-        read -rp "  $(echo -e "${ORANGE}>${NC}") Choix : " choice
-
-        case "$choice" in
-            1) config_tavily ;;
-            2) config_gemini ;;
-            3) config_groq ;;
-            4) config_ollama_cloud ;;
-            5) config_nvidia ;;
-            6) config_mistral ;;
-            7) config_slack ;;
-            8) config_google ;;
-            9) config_jira ;;
-            10) config_projects_dir ;;
-            11) config_quant ;;
-            12) config_football_data ;;
-            13) config_mcp ;;
-            a|A)
-                config_tavily
-                config_gemini
-                config_groq
-                config_ollama_cloud
-                config_nvidia
-                config_mistral
-                config_slack
-                config_google
-                config_jira
-                config_projects_dir
-                config_quant
-                config_football_data
-                config_mcp
-                ;;
-            q|Q)
-                info "Configuration terminée."
-                break
-                ;;
-            *) warn "Choix invalide — entre un numéro, 'a' ou 'q' pour quitter." ;;
-        esac
-    done
+    "$(dossier_venv)/bin/python" -m src.plugins install ./axon-overlay \
+        || warn "Installation de l'île échouée — dans Axon : /plugin install ./axon-overlay"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -630,38 +166,57 @@ deploy() {
     # ── 1. Prérequis système ──────────────────────────────────
     step "Prérequis système"
 
+    local systeme
+    systeme="$(uname -s)"
+    local conseil_python="sudo pacman -S python   ou   sudo apt install python3 python3-venv"
+    [[ "$systeme" == "Darwin" ]] && conseil_python="brew install python@3.12   (ou https://www.python.org/downloads/)"
+
     if ! command -v python3 &>/dev/null; then
-        fail "Python 3 introuvable. Installe Python 3.11+ puis relance."
+        fail "Python 3 introuvable. Installe Python 3.11+ puis relance : $conseil_python"
     fi
     PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
     PY_MAJOR=$(echo "$PY_VERSION" | cut -d. -f1)
     PY_MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
     if [[ "$PY_MAJOR" -lt 3 || ( "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 11 ) ]]; then
-        fail "Python 3.11+ requis (version actuelle : $PY_VERSION)"
+        fail "Python 3.11+ requis (version actuelle : $PY_VERSION) : $conseil_python"
     fi
     ok "Python $PY_VERSION"
 
-    if ! command -v ollama &>/dev/null; then
-        warn "Ollama non installé — installation..."
-        curl -fsSL https://ollama.com/install.sh | sh
-        ok "Ollama installé"
-    else
+    if command -v ollama &>/dev/null; then
         ok "Ollama $(ollama --version 2>/dev/null | head -1)"
+    elif [[ "$systeme" == "Darwin" ]]; then
+        # Le script d'installation d'ollama.com ne vise que Linux.
+        if command -v brew &>/dev/null; then
+            info "Ollama non installé — installation via Homebrew..."
+            brew install ollama && ok "Ollama installé"
+        else
+            warn "Ollama absent — installe l'app : https://ollama.com/download"
+        fi
+    else
+        warn "Ollama non installé — installation..."
+        curl -fsSL https://ollama.com/install.sh | sh && ok "Ollama installé"
     fi
 
-    if command -v libreoffice &>/dev/null; then
+    if command -v libreoffice &>/dev/null || command -v soffice &>/dev/null; then
         ok "LibreOffice (export PDF)"
     else
         warn "LibreOffice absent — export PDF des lettres indisponible"
-        warn "  sudo pacman -S libreoffice-still   ou   sudo apt install libreoffice"
+        if [[ "$systeme" == "Darwin" ]]; then
+            warn "  brew install --cask libreoffice"
+        else
+            warn "  sudo pacman -S libreoffice-still   ou   sudo apt install libreoffice"
+        fi
     fi
 
-    if command -v wl-paste &>/dev/null || command -v xclip &>/dev/null || command -v xsel &>/dev/null; then
-        ok "Presse-papiers ($(command -v wl-paste &>/dev/null && echo 'wl-clipboard' || echo 'xclip/xsel'))"
-    else
-        warn "Presse-papiers absent — commande /paste indisponible"
-        warn "  Wayland : sudo pacman -S wl-clipboard   ou   sudo apt install wl-clipboard"
-        warn "  X11     : sudo pacman -S xclip           ou   sudo apt install xclip"
+    # macOS : /paste lit le presse-papiers par Pillow, sans outil externe.
+    if [[ "$systeme" == "Linux" ]]; then
+        if command -v wl-paste &>/dev/null || command -v xclip &>/dev/null || command -v xsel &>/dev/null; then
+            ok "Presse-papiers ($(command -v wl-paste &>/dev/null && echo 'wl-clipboard' || echo 'xclip/xsel'))"
+        else
+            warn "Presse-papiers absent — commande /paste indisponible"
+            warn "  Wayland : sudo pacman -S wl-clipboard   ou   sudo apt install wl-clipboard"
+            warn "  X11     : sudo pacman -S xclip           ou   sudo apt install xclip"
+        fi
     fi
 
     # ── 2. Environnement virtuel ──────────────────────────────
@@ -731,40 +286,17 @@ deploy() {
     else
         ok ".env déjà présent → $(pwd)/.env"
     fi
-    config_user_name
+    configurer identite
 
     # ── 5. Modèles Ollama ─────────────────────────────────────
-    step "Modèles Ollama"
+    installer_modeles_ollama
 
-    if ! ollama list &>/dev/null 2>&1; then
-        info "Démarrage d'Ollama en arrière-plan..."
-        ollama serve &>/dev/null &
-        sleep 3
-    fi
+    # ── 6. Rappels et île ─────────────────────────────────────
+    installer_rappels "$VENV_DIR"
+    installer_ile
 
-    if ollama list 2>/dev/null | grep -q "nomic-embed-text"; then
-        ok "nomic-embed-text (embedding) déjà présent"
-    else
-        info "Téléchargement de nomic-embed-text (~274 MB, requis)..."
-        ollama pull nomic-embed-text
-        ok "nomic-embed-text prêt"
-    fi
-
-    echo ""
-    if ollama list 2>/dev/null | grep -q "qwen2.5:7b"; then
-        ok "qwen2.5:7b déjà présent"
-    else
-        echo -e "  ${DIM}Backend local optionnel — utile si tu n'as pas accès au cloud${NC}"
-        read -rp "  $(echo -e "${ORANGE}?${NC}") Télécharger qwen2.5:7b pour le backend local ? [o/N] " pull_local
-        if [[ "$pull_local" =~ ^[oOyY]$ ]]; then
-            info "Téléchargement de qwen2.5:7b (~4.4 GB)..."
-            ollama pull qwen2.5:7b
-            ok "qwen2.5:7b prêt"
-        fi
-    fi
-
-    # ── 6. Configuration des services ─────────────────────────
-    config_menu
+    # ── 7. Configuration des services ─────────────────────────
+    configurer menu
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -779,15 +311,15 @@ if [[ "${1:-}" == "--config-only" ]]; then
         cp .env.sample .env
         ok ".env créé depuis .env.sample"
     fi
-    config_user_name
-    config_menu
+    configurer identite
+    configurer menu
 else
     deploy
 fi
 
 # ── Récapitulatif final ───────────────────────────────────────
 echo ""
-show_status
+configurer statut
 echo -e "${ORANGE}  ─────────────────────────────────────${NC}"
 echo -e "${ORANGE}  Prêt.${NC}"
 echo ""

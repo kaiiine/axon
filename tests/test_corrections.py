@@ -23,6 +23,7 @@ from src.orchestrator.modele.corrections import (
     garde_du_domaine,
     question_deja_repondue,
     question_en_texte_libre,
+    reponse_vide,
 )
 
 
@@ -110,6 +111,31 @@ def test_la_synthese_forcee_desactive_la_detection():
     ctx = Contexte(working=[_reponse_de_clarification("Quel sport ?", "tennis")],
                    force_text=True)
     assert question_deja_repondue(_demande(["Quel sport ?"]), ctx) is None
+
+
+# ── réponse vide ───────────────────────────────────────────────────────────────
+
+def test_une_reponse_vide_est_detectee():
+    """gpt-oss:120b rendait un tour vide après un `git_status` : la tâche
+    s'arrêtait sur le compte rendu de secours, sans conclusion."""
+    assert reponse_vide(AIMessage(content=""), Contexte()) is not None
+
+
+def test_un_appel_d_outil_sans_texte_n_est_pas_une_reponse_vide():
+    appel = AIMessage(content="", tool_calls=[{"name": "git_status", "id": "1",
+                                               "args": {"repo_path": "."}}])
+    assert reponse_vide(appel, Contexte()) is None
+
+
+def test_la_reponse_vide_n_est_pas_renvoyee_au_modele():
+    """Mistral refuse un message assistant vide : seule la consigne part."""
+    recus = []
+    appliquer(AIMessage(content=""), Contexte(working=[HumanMessage(content="go")]),
+              invoquer=lambda m: recus.append(m) or AIMessage(content="fini"),
+              correcteurs=[reponse_vide])
+
+    assert len(recus) == 1
+    assert [type(m).__name__ for m in recus[0]] == ["HumanMessage", "HumanMessage"]
 
 
 # ── appel d'outil écrit en texte ───────────────────────────────────────────────

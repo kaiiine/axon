@@ -99,7 +99,7 @@ def _arguments_valides(attendu: str, reponse) -> tuple[bool, str]:
     il réussit quand la signature se devine, et rien ne dit qu'il réussisse quand
     elle ne se devine pas.
     """
-    from src.orchestrator.catalogue import outil as _outil
+    from src.orchestrator.routage.catalogue import outil as _outil
 
     cible = _outil(attendu)
     if cible is None or not getattr(cible, "args_schema", None):
@@ -200,7 +200,7 @@ def _avec_reparation(llm, messages: list, selection: list, pause: float = 0.0):
     """
     from langchain_core.messages import HumanMessage
 
-    from src.orchestrator.provider_quirks import outil_ecrit_en_json
+    from src.orchestrator.modele.provider_quirks import outil_ecrit_en_json
 
     reponse = _invoquer(llm, messages, pause)
     if getattr(reponse, "tool_calls", None):
@@ -233,8 +233,8 @@ def _repare_sur_lerreur(llm, messages: list, reponse, attendu: str) -> tuple[boo
     """
     from langchain_core.messages import ToolMessage
 
-    from src.orchestrator.catalogue import outil as _outil
-    from src.orchestrator.resilience import tool_error_to_message
+    from src.orchestrator.routage.catalogue import outil as _outil
+    from src.orchestrator.modele.resilience import tool_error_to_message
 
     appel = next((a for a in (getattr(reponse, "tool_calls", None) or [])
                   if a.get("name") == attendu), None)
@@ -268,9 +268,9 @@ def _monde():
     l'identique, MCP en moins — ses serveurs ne tournent pas forcément, et un
     catalogue qui varie d'une exécution à l'autre rendrait le chiffre incomparable.
     """
-    from src.orchestrator.catalogue import indexer, obtenir_outil
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.catalogue import indexer, obtenir_outil
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     outils = build_all_tools()
     retriever = ToolRetriever(outils)
@@ -299,8 +299,8 @@ def mesurer(cas: list[tuple[str, str]], titre: str, fabrique, monde,
 
     from langchain_core.messages import HumanMessage
 
-    from src.orchestrator.catalogue import menu
-    from src.orchestrator.graph import _ensure_system_prompt, _restreindre_les_skills
+    from src.orchestrator.routage.catalogue import menu
+    from src.orchestrator.noeuds.chat import _ensure_system_prompt, _restreindre_les_skills
 
     retriever, obtenir_outil = monde
     print(f"\n━━ {titre} ━━")

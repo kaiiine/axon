@@ -1,0 +1,6 @@
+# Configuration de Starship pour désactiver le module context ou augmenter le timeout
+# Désactiver le module context (évite le scan du répertoire)
+[context]
+disabled = true
+# Ou augmenter le timeout (en millisecondes, par défaut 500)
+# scan_timeout = 2000

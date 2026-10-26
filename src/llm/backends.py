@@ -68,7 +68,7 @@ BACKENDS: dict[str, Backend] = {
     "mistral": Backend(
         nom="mistral", fabrique="make_llm_mistral", champ_modele="mistral_model",
         cles=("MISTRAL_API_KEY", "MISTRAL_API_KEYS"),
-        modeles=("mistral-small-2603", "codestral-2508", "mistral-large-latest", "ministral-8b-2512", "ministral-14b-2512")),
+        modeles=("mistral-medium-latest", "mistral-small-2603", "codestral-2508", "mistral-large-latest", "ministral-8b-2512", "ministral-14b-2512")),
     "nvidia": Backend(
         nom="nvidia", fabrique="make_llm_nvidia", champ_modele="nvidia_model",
         cles=("NVIDIA_API_KEY", "NVIDIA_API_KEYS"), gratuit=True,
@@ -77,7 +77,8 @@ BACKENDS: dict[str, Backend] = {
         nom="openrouter", fabrique="make_llm_openrouter",
         champ_modele="openrouter_model",
         cles=("OPENROUTER_API_KEY", "OPENROUTER_API_KEYS"), gratuit=True,
-        modeles=("minimax/minimax-m3:free",
+        modeles=("minimax/minimax-m3",
+                 "minimax/minimax-m3.1-flash:free",
                  "nvidia/nemotron-3-ultra-550b-a55b:free",
                  "nvidia/nemotron-3.5-lightning:free",
                  "inclusionai/ling-3.0-flash-fin:free")),

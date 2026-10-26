@@ -13,6 +13,8 @@ from ._aide import date_courte, etat_depot, jours_restants, temps_restant_texte
 
 #: Fenêtre du récapitulatif : au-delà, une échéance n'appelle rien aujourd'hui.
 HORIZON_RECAP_JOURS = 14
+#: Au-delà, une échéance en retard n'est plus rappelée chaque matin.
+HORIZON_RETARD_JOURS = 30
 #: Une notification bureau reste lisible en quelques lignes.
 LIGNES_MAX = 6
 
@@ -34,6 +36,11 @@ def echeance_du_rappel(cron_id: str) -> tuple[dict, dict] | None:
     return suivi, echeance
 
 
+def contexte_echeance(suivi: dict, echeance: dict) -> dict:
+    """Ce que l'île doit savoir d'un rappel d'échéance pour proposer ses actions."""
+    return {"genre": "echeance", "suivi_id": suivi["id"], "echeance_id": echeance["id"]}
+
+
 def texte_rappel_manque(suivi: dict, echeance: dict) -> tuple[str, str]:
     titre = f"Axon · {echeance['titre']}"
     corps = (f"{suivi['titre']} — {temps_restant_texte(echeance['date'])} "
@@ -47,6 +54,13 @@ def recap_du_jour() -> tuple[str, str] | None:
     from .store import lister_echeances, lister_suivis, obtenir_ressource
 
     lignes = []
+    # En retard d'abord : une échéance passée encore « à venir » n'a été ni
+    # rendue ni reportée — c'est elle qu'il ne faut pas laisser filer en silence.
+    for suivi, echeance in lister_echeances(a_venir_seulement=False):
+        retard = -jours_restants(echeance["date"])
+        if echeance.get("statut") != "a_venir" or not 0 < retard <= HORIZON_RETARD_JOURS:
+            continue
+        lignes.append(f"• {echeance['titre']} ({suivi['titre']}) — en retard de {retard} j")
     for suivi, echeance in lister_echeances(a_venir_seulement=True):
         if echeance.get("statut") == "annulee" or jours_restants(echeance["date"]) > HORIZON_RECAP_JOURS:
             continue

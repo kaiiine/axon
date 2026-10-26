@@ -1,9 +1,9 @@
 """Pont vers l'île flottante (axon-overlay, processus GTK séparé).
 
-Copie quasi à l'identique de `axon-overlay/pont_axon.py` — gardée en double
-volontairement : l'overlay est un processus séparé, potentiellement absent ou
-jamais lancé, ce module ne doit donc dépendre que de la bibliothèque standard
-(aucun import vers `src.*` dans la classe elle-même).
+L'overlay est un processus séparé, potentiellement absent ou jamais lancé : ce
+module ne dépend que de la bibliothèque standard et de `src.infra.canal_overlay`,
+qui choisit le transport selon le système (socket Unix, ou TCP local à jeton
+sous Windows).
 
 Règle de sécurité centrale : si l'overlay est absent, ne répond pas ou se
 déconnecte, `demander` renvoie None. None ne veut JAMAIS dire « accordé » :
@@ -12,22 +12,27 @@ l'appelant doit alors reposer la question dans le CLI.
 from __future__ import annotations
 
 import json
-import os
 import queue
 import socket
 import threading
+import time
 import uuid
 from pathlib import Path
 
-RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
-SOCKET = RUNTIME / "axon" / "overlay.sock"
+from src.infra import canal_overlay
+
+#: Secondes entre deux tentatives quand l'île n'est pas jointe.
+_DELAI_RECONNEXION = 2.0
 
 
 class PontOverlay:
-    def __init__(self, chemin: Path = SOCKET) -> None:
+    def __init__(self, chemin: Path | None = None) -> None:
+        #: Un socket Unix précis ; None = le canal `overlay` du système.
         self.chemin = chemin
         #: False tant que `activer()` n'a pas été appelé : voir sa docstring.
         self.actif = False
+        #: True une fois le fil de reconnexion lancé (voir `_reconnecter`).
+        self._veille = False
         self.sock: socket.socket | None = None
         self.verrou = threading.Lock()
         self.attentes: dict[str, list] = {}       # id -> [Event, décision]
@@ -113,7 +118,22 @@ class PontOverlay:
         réponse donnée dans l'île à ce moment-là se perdait (le CLI retombait
         sur sa question au terminal, l'île semblait bloquée)."""
         self.actif = True
+        if not self._veille:
+            self._veille = True
+            threading.Thread(target=self._reconnecter, daemon=True).start()
         return self.connecter()
+
+    def _reconnecter(self) -> None:
+        """Retente la connexion tant que l'île n'est pas jointe.
+
+        `envoyer()` retente déjà, mais seulement quand le CLI a quelque chose à
+        dire : une île lancée APRÈS le CLI, ou relancée pendant qu'il attend ta
+        saisie, restait « hors ligne » jusqu'au prochain message. Une connexion
+        vers une île absente échoue tout de suite, la boucle ne coûte rien."""
+        while self.actif:
+            if not self.connecte:
+                self.connecter()
+            time.sleep(_DELAI_RECONNEXION)
 
     def connecter(self) -> bool:
         """Tente une connexion. Renvoie False sans bruit si l'overlay n'est pas
@@ -124,8 +144,7 @@ class PontOverlay:
             if self.sock is not None:
                 return True
             try:
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                s.connect(str(self.chemin))
+                s = canal_overlay.connecter(canal_overlay.OVERLAY, chemin=self.chemin)
             except OSError:
                 return False
             self.sock = s
@@ -258,13 +277,19 @@ class PontOverlay:
         # démesuré.
         self.envoyer(type="message", texte=texte[:8000])
 
+    def reponse_flux(self, texte: str) -> None:
+        """La réponse en cours d'écriture, entière à chaque envoi : un message
+        perdu ne laisse pas de trou, le suivant le remplace. `message()` clôt."""
+        self.envoyer(type="reponse_flux", texte=texte[:8000])
+
     def pieces_jointes(self, items: list[dict]) -> None:
         """Snapshot complet des pièces jointes en attente (pas de delta : la
         liste est toujours petite — même logique que `raccourci_resultat` qui
         renvoie tout le panneau plutôt qu'un diff)."""
         self.envoyer(type="pieces_jointes", items=items)
 
-    def demander(self, demande: dict, delai: float = 300) -> list[str] | None:
+    def demander(self, demande: dict, delai: float = 300,
+                 id_: str | None = None) -> list[str] | None:
         """Pose n'importe quelle demande HITL (autorisation, clarification,
         diff, plan, envoi — cf. `src/orchestrator/commun/hitl.py`) à l'île.
         Bloque jusqu'à ta réponse.
@@ -274,7 +299,7 @@ class PontOverlay:
         pas de réponse possible ici (overlay absent, délai dépassé, connexion
         perdue) : redemander dans le CLI. None ne veut JAMAIS dire « accordé ».
         """
-        id_ = uuid.uuid4().hex[:8]
+        id_ = id_ or uuid.uuid4().hex[:8]
         evenement = threading.Event()
         self.attentes[id_] = [evenement, None]
         try:
@@ -287,9 +312,15 @@ class PontOverlay:
         finally:
             self.attentes.pop(id_, None)
 
-    def annuler(self, id_: str) -> None:
-        """À appeler si la réponse est venue d'ailleurs (le CLI), pour fermer la carte."""
+    def abandonner(self, id_: str) -> None:
+        """La réponse est venue d'ailleurs (le terminal) : `demander` rend None
+        tout de suite, et la carte de l'île se ferme."""
+        attente = self.attentes.get(id_)
+        if attente is not None:
+            attente[1] = None
+            attente[0].set()
         self.envoyer(type="annulation", id=id_)
+
 
 
 #: Singleton partagé par tout le CLI. Inactif tant que `app.run_cli` ne l'a

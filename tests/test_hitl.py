@@ -139,6 +139,20 @@ def test_libre_par_defaut_vrai_et_survit_a_false_dans_laller_retour():
     assert Demande.depuis(demande.en_clair()) == demande
 
 
+def test_la_condition_d_une_question_de_suivi_survit_a_l_aller_retour():
+    """`si` dit au client de ne poser « Que faut-il changer ? » qu'après
+    « Préciser » : l'île la posait aussi après « Exécuter le plan » et
+    n'envoyait rien tant qu'on n'y répondait pas."""
+    from src.orchestrator.noeuds.plan import PRECISER
+    assert Question("Un commentaire ?").si == ""
+    demande = Demande(
+        genre="plan", cle="p",
+        questions=(Question("Ce plan te convient ?", ("Exécuter le plan", PRECISER)),
+                   Question("Que faut-il changer ?", si=PRECISER)))
+    assert demande.en_clair()["questions"][1]["si"] == PRECISER
+    assert Demande.depuis(demande.en_clair()) == demande
+
+
 def test_le_client_lit_la_demande_dans_la_sortie_du_graphe():
     """Ce que TUI et API partagent — c'est cette lecture commune qui fait que le
     HITL cesse d'être une propriété de l'interface."""

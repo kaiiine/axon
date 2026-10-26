@@ -160,6 +160,29 @@ def question_deja_repondue(response, ctx: Contexte) -> Verdict:
     )
 
 
+def reponse_vide(response, ctx: Contexte) -> Verdict:
+    """Le modèle rend un tour sans texte NI appel d'outil — la tâche meurt là.
+
+    Mesuré avec gpt-oss:120b sur Ollama Cloud : après un `git_status`, une
+    dizaine de tokens générés, `done_reason: stop`, et un contenu vide (les
+    tokens partent dans un canal qu'Ollama ne rend pas). L'utilisateur ne
+    voyait que le compte rendu de secours, sans savoir pourquoi ça s'arrêtait.
+    """
+    if getattr(response, "tool_calls", None):
+        return None
+    if texte_du_contenu(response.content).strip():
+        return None
+    return (
+        "réponse vide du modèle",
+        "[SYSTEME] Ta dernière réponse était vide : ni texte, ni appel d'outil. "
+        "Reprends la tâche là où tu en étais. Si une étape reste à faire, "
+        "appelle l'outil suivant. Sinon, rédige maintenant la réponse finale "
+        "à l'utilisateur à partir des résultats déjà obtenus — et dis "
+        "explicitement ce qui manque si une information n'était pas "
+        "disponible.",
+    )
+
+
 def appel_ecrit_en_texte(response, ctx: Contexte) -> Verdict:
     """Le modèle a ÉCRIT un appel d'outil au lieu de l'émettre — rien ne s'exécute."""
     if ctx.force_text or getattr(response, "tool_calls", None):
@@ -213,6 +236,7 @@ def question_en_texte_libre(response, ctx: Contexte) -> Verdict:
 
 #: Les détections valables quel que soit le domaine.
 CORRECTEURS_DE_BASE: list[Correcteur] = [
+    reponse_vide,
     question_deja_repondue,
     appel_ecrit_en_texte,
     question_en_texte_libre,
@@ -253,8 +277,12 @@ def appliquer(response, ctx: Contexte, invoquer, notifier=None,
         annonce, consigne = verdict
         if notifier:
             notifier(f"{annonce} — correction…")
+        # Un message assistant vide est refusé par certains fournisseurs
+        # (Mistral) : on ne le renvoie pas, la consigne suffit.
+        fautive = ([response] if getattr(response, "tool_calls", None)
+                   or texte_du_contenu(response.content).strip() else [])
         try:
-            response = invoquer(ctx.working + [response, HumanMessage(content=consigne)])
+            response = invoquer(ctx.working + fautive + [HumanMessage(content=consigne)])
         except Exception:      # noqa: BLE001 — on garde la réponse d'origine
             pass
     return response

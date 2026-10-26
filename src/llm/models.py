@@ -373,6 +373,14 @@ def _openrouter(modele: str, cle: str):
     """
     from langchain_openai import ChatOpenAI
 
+    provider: dict = {
+        "allow_fallbacks": True,
+        "require_parameters": True,
+    }
+
+    if settings.openrouter_providers:
+        provider["order"] = settings.openrouter_providers
+
     return ChatOpenAI(
         model=modele,
         api_key=cle,

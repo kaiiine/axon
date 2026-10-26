@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     openrouter_coding_model: str = "minimax/minimax-m3:free"
     openrouter_api_keys: str = ""     # OPENROUTER_API_KEYS=key1,key2,...
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_providers: list[str] = ["CoreWeave", "ModelRun"]
 
 
 
@@ -87,6 +88,12 @@ class Settings(BaseSettings):
     # lancé et aucune capture n'est demandée — ce n'est pas un affichage masqué,
     # c'est un sidecar absent.
     apercu_navigateur: bool = True
+    #: `load_skill` et le catalogue des skills toujours liés au modèle, hors du
+    #: classement des groupes d'outils. À True, un skill reste proposable même
+    #: quand un groupe d'action gagne le budget (gmail pour « rédige un mail »).
+    #: À False, l'ancien routage : le groupe `skills`, moyenné, concourt comme
+    #: les autres et perd dès qu'un groupe d'action recoupe un skill.
+    skills_toujours_lies: bool = True
     #: "" laisse le registre choisir le meilleur moteur présent. Un nom inconnu
     #: n'est pas une erreur : on retombe sur l'ordre par défaut.
     apercu_moteur: str = ""
@@ -142,8 +149,12 @@ def _load_yaml_config() -> dict:
 
 
 def _merge_yaml_into_settings() -> Settings:
+    """`configs/base.yaml` (partagé par le dépôt) donne les défauts ; `.env` et
+    l'environnement de chacun l'emportent. Passées telles quelles à `Settings`,
+    les valeurs du YAML écrasaient l'environnement : un `MISTRAL_MODEL` adapté à
+    son offre n'avait aucun effet."""
     yml = _load_yaml_config()
-    return Settings(
+    valeurs = dict(
         ollama_model=yml.get("ollama", {}).get("model", "qwen2.5:7b"),
         temperature=yml.get("ollama", {}).get("temperature", 0.0),
         search_backend=yml.get("search", {}).get("backend", "tavily"),
@@ -157,8 +168,12 @@ def _merge_yaml_into_settings() -> Settings:
         mistral_model=yml.get("mistral", {}).get("model", "mistral-small-2603"),
         mistral_coding_model=yml.get("mistral", {}).get("coding_model", "codestral-2508"),
         nvidia_model=yml.get("nvidia", {}).get("model", "meta/muse-glimmer-30b"),
-        nvidia_coding_model=yml.get("nvidia", {}).get("coding_model", "meta/muse-glimmer-30b")
+        nvidia_coding_model=yml.get("nvidia", {}).get("coding_model", "meta/muse-glimmer-30b"),
+        openrouter_model=yml.get("openrouter", {}).get("model", "minimax/minimax-m3"),
+        openrouter_coding_model=yml.get("openrouter", {}).get("coding_model", "minimax/minimax-m3"),
+        openrouter_providers=yml.get("openrouter", {}).get("providers", ["CoreWeave", "ModelRun"]),
     )
+    return Settings(**{cle: valeur for cle, valeur in valeurs.items() if not os.environ.get(cle.upper())})
 
 
 settings = _merge_yaml_into_settings()

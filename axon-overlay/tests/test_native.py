@@ -1,6 +1,7 @@
 """Contrat de fenêtre testé sans GTK : exécute la vraie classe avec des doublures."""
 import ast
 import json
+import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,9 @@ from unittest.mock import Mock
 source = Path(__file__).resolve().parents[1] / "overlay.py"
 tree = ast.parse(source.read_text())
 overlay = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Overlay")
+# Les constantes du module (tailles, marges, chemins), telles qu'écrites.
+constantes = [n for n in tree.body if isinstance(n, ast.Assign)
+              and all(isinstance(c, ast.Name) and c.id.isupper() for c in n.targets)]
 
 
 class Application:
@@ -16,8 +20,9 @@ class Application:
         pass
 
 
-scope = {"Gtk": SimpleNamespace(Application=Application), "GLib": SimpleNamespace(idle_add=Mock(), Error=RuntimeError), "json": json, "TAILLE_ACCUEIL": (680, 184), "TAILLE_DETAIL": (680, 420)}
-exec(compile(ast.Module(body=[overlay], type_ignores=[]), str(source), "exec"), scope)
+scope = {"Gtk": SimpleNamespace(Application=Application), "GLib": SimpleNamespace(idle_add=Mock(), Error=RuntimeError),
+         "LayerShell": Mock(), "json": json, "os": os, "Path": Path, "__file__": str(source)}
+exec(compile(ast.Module(body=[*constantes, overlay], type_ignores=[]), str(source), "exec"), scope)
 
 
 class NativeTests(unittest.TestCase):
@@ -57,9 +62,9 @@ class NativeTests(unittest.TestCase):
     def test_resize_only_on_mode_change(self):
         self.app.definir_mode("detail")
         self.app.definir_mode("detail")
-        self.app.vue.set_size_request.assert_called_once_with(680, 420)
+        self.app.vue.set_size_request.assert_called_once_with(*scope["TAILLE_DETAIL"])
         self.app.definir_mode("accueil")
-        self.app.vue.set_size_request.assert_called_with(680, 184)
+        self.app.vue.set_size_request.assert_called_with(*scope["TAILLE_ACCUEIL"])
 
     def test_single_load_and_real_clip(self):
         text = source.read_text()

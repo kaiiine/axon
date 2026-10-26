@@ -73,7 +73,7 @@ def envoyer(state: dict) -> dict:
         questions=(
             Question(texte="Envoyer ce mail ?",
                      choix=(ENVOYER, ANNULER, MODIFIER), affirmatif=ENVOYER),
-            Question(texte="Que faut-il changer ?"),
+            Question(texte="Que faut-il changer ?", si=MODIFIER),
         ),
     ))
 

@@ -171,13 +171,13 @@ def _deux_jeux(cas: list[tuple[str, str]]):
 
 
 def mesurer_les_outils(journal: bool = False) -> None:
-    from src.orchestrator import tool_retriever as module
+    from src.orchestrator.routage import tool_retriever as module
 
     # Index ISOLÉ : mesurer ne doit pas réécrire le cache dont dépend le démarrage.
     module._CACHE_DIR = Path("/tmp/axon-mesure-routage")
     module._CACHE_HASH = module._CACHE_DIR / "fingerprint.txt"
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever
 
     cas = corpus()
     hors = sorted({a for _, a in cas if a not in TOOL_GROUPS and a != "aucun"})
@@ -359,12 +359,12 @@ def mesurer_les_constantes() -> None:  # noqa: C901
     non le rang 1 : c'est ce que le modèle reçoit. La largeur suit, parce qu'un
     budget plus large achète toujours du rappel et qu'il faut voir le prix.
     """
-    from src.orchestrator import tool_retriever as module
+    from src.orchestrator.routage import tool_retriever as module
 
     module._CACHE_DIR = Path("/tmp/axon-mesure-routage")
     module._CACHE_HASH = module._CACHE_DIR / "fingerprint.txt"
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever
 
     cas = [(q, a) for q, a in corpus() if a in TOOL_GROUPS or a == "aucun"]
     reglage, tenu = _deux_jeux(cas)

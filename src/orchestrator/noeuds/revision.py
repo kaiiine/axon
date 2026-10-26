@@ -189,7 +189,7 @@ def reviser(state: dict) -> dict:
                       f"{'s' if nombre > 1 else ''} — que faire ?",
                 choix=(APPLIQUER, REFUSER, PRECISER),
                 affirmatif=APPLIQUER),
-            Question(texte="Que faut-il ajuster ?"),
+            Question(texte="Que faut-il ajuster ?", si=PRECISER),
         ),
     ))
 

@@ -11,14 +11,15 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from ._aide import STATUTS_ECHEANCE, TYPES_ECHEANCE, avancement_exercices, deja_passe, neuf_heures, temps_restant_texte
+from ._aide import (STATUTS_ECHEANCE, TYPES_ECHEANCE, avancement_exercices, deja_passe, jours_restants,
+                    neuf_heures, temps_restant_texte)
 
 
 # ── échéances ────────────────────────────────────────────────────────────
 
 @tool("etude_ajouter_echeance")
 def etude_ajouter_echeance(
-    suivi_id: str, titre: str, type: str, date: str,
+    suivi_id: str, titre: str, date: str, type: str = "autre",
     ressources_ciblees: list[str] | None = None, chapitres: list[str] | None = None,
     notes: str = "",
 ) -> str:
@@ -38,7 +39,9 @@ def etude_ajouter_echeance(
 
     **Args:**
         - `suivi_id` (str)
-        - `titre`, `type` (str) : type ∈ "devoir", "partiel", "rendu_projet", "autre"
+        - `titre` (str)
+        - `type` (str, optionnel) : "devoir", "partiel", "rendu_projet" ou
+          "autre" (défaut) — un jalon intermédiaire est un "autre"
         - `date` (str) : YYYY-MM-DD
         - `ressources_ciblees` (list[str], optionnel) : ids de ressources du
           suivi concernées ; vide = toutes
@@ -206,7 +209,9 @@ def etude_planifier_rappel_echeance(suivi_id: str, echeance_id: str, offsets_jou
     """
     Programme des rappels desktop avant une échéance (défaut 7, 3 et 1 jour
     avant, à 9h) — survivent à la fermeture d'Axon tant que le service de
-    rappels tourne. Un offset tombant dans le passé est ignoré.
+    rappels tourne. Un offset tombant dans le passé est ignoré ; si TOUS le
+    sont alors que l'échéance est à venir, un seul rappel est programmé le
+    jour J à 9h (ou dans la minute si 9h est passé).
 
     Mots-clés : rappel, alerte, notification, prévenir, me rappeler.
 
@@ -217,7 +222,7 @@ def etude_planifier_rappel_echeance(suivi_id: str, echeance_id: str, offsets_jou
     **Returns:**
         - Confirmation listant les rappels effectivement programmés.
     """
-    from datetime import timedelta as _timedelta
+    from datetime import datetime as _datetime, timedelta as _timedelta
     from src.agents.cron.store import add_task
     from .store import trouver_echeance, ajouter_rappel_echeance
 
@@ -239,8 +244,23 @@ def etude_planifier_rappel_echeance(suivi_id: str, echeance_id: str, offsets_jou
         ajouter_rappel_echeance(suivi_id, echeance_id, cron_id, quand.isoformat(), offset)
         programmes.append(f"{offset} j avant ({quand.strftime('%d/%m %H:%M')})")
 
+    # Échéance trop proche pour J-7/J-3/J-1 : un seul rappel, à 9h le jour J
+    # (ou dans la minute si 9h est passé).
+    restants = jours_restants(echeance["date"])
+    if not programmes and restants >= 0:
+        quand = neuf_heures(echeance["date"])
+        if deja_passe(quand):
+            quand = _datetime.now(quand.tzinfo) + _timedelta(minutes=1)
+        delai = "aujourd’hui" if restants == 0 else f"dans {restants} jour(s)"
+        prompt = (f"Rappelle à l’utilisateur : {echeance['type']} — {echeance['titre']} "
+                  f"({suivi['titre']}), {delai} (le {echeance['date']}).")
+        cron_id = add_task(description=f"Rappel · {echeance['titre']}", prompt=prompt,
+                           interval_sec=0, notif_channels=["desktop"], run_at=quand.isoformat())
+        ajouter_rappel_echeance(suivi_id, echeance_id, cron_id, quand.isoformat(), restants)
+        programmes.append(f"échéance proche ({quand.strftime('%d/%m %H:%M')})")
+
     if not programmes:
-        return "Aucun rappel programmé : tous les offsets demandés tombent dans le passé."
+        return "Aucun rappel programmé : l’échéance est déjà passée."
     return "Rappels programmés : " + ", ".join(programmes) + "."
 
 

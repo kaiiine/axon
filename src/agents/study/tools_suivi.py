@@ -108,7 +108,10 @@ def etude_detail_suivi(suivi_id: str) -> str:
             if r is None:
                 continue
             etat = "" if r["accessible"] else f" ⚠️ inaccessible : {r['message_erreur']}"
-            lignes.append(f"- [{r['type']}] **{r['nom']}** (`{r['id']}`){etat}")
+            # Le chemin, sinon le modèle part chercher le dépôt à coups de `ls`.
+            chemin = f" — `{r['chemin']}`" if r.get("chemin") else ""
+            branche = f" (branche `{r['branche']}`)" if r.get("branche") else ""
+            lignes.append(f"- [{r['type']}] **{r['nom']}** (`{r['id']}`){chemin}{branche}{etat}")
     else:
         lignes.append("\n_Aucune ressource associée._")
 

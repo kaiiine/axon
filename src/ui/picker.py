@@ -36,24 +36,23 @@ def pick(options: List[str], title: str = "", current: str = "") -> str | None:
     if not options:
         return None
 
-    from src.ui.pont_overlay import pont
-    if pont.connecte:
-        from src.orchestrator.commun.hitl import CLARIFICATION, Demande, Question
-        demande = Demande(
-            genre=CLARIFICATION, cle=title,
-            # libre=False : une valeur hors `options` n'a pas de sens ici (pas
-            # de "backend personnalisé"), donc pas d'« Autre » à proposer —
-            # contrairement à une vraie clarification, où `libre` reste True.
-            questions=(Question(texte=title or "Choisis une option", choix=tuple(options), libre=False),),
-        )
-        reponses = pont.demander(demande.en_clair())
-        if reponses is not None:
-            # Une réponse "Autre" côté île qui ne correspond à aucune option
-            # n'est pas une vraie sélection ici — annulé plutôt qu'accepté
-            # au hasard, et surtout pas re-proposé au terminal (l'utilisateur
-            # vient de répondre, le re-demander ailleurs serait déroutant).
-            return reponses[0] if reponses[0] in options else None
+    from src.orchestrator.commun.hitl import CLARIFICATION, Demande, Question
+    from src.ui.course_hitl import en_course
+    demande = Demande(
+        genre=CLARIFICATION, cle=title,
+        # libre=False : une valeur hors `options` n'a pas de sens ici (pas
+        # de "backend personnalisé"), donc pas d'« Autre » à proposer —
+        # contrairement à une vraie clarification, où `libre` reste True.
+        questions=(Question(texte=title or "Choisis une option", choix=tuple(options), libre=False),),
+    )
+    # Terminal ET île, la première réponse gagne (voir course_hitl.py). Une
+    # réponse de l'île hors `options` est annulée plutôt qu'acceptée au hasard.
+    return en_course(demande.en_clair(),
+                     lambda: _picker_terminal(options, current, title),
+                     lambda reponses: reponses[0] if reponses and reponses[0] in options else None)
 
+
+def _picker_terminal(options: list[str], current: str | None, title: str) -> str | None:
     try:
         start = options.index(current)
     except ValueError:
@@ -108,4 +107,5 @@ def pick(options: List[str], title: str = "", current: str = "") -> str | None:
         full_screen=False,
         mouse_support=False,
     )
-    return app.run()
+    from src.ui.course_hitl import executer_annulable
+    return executer_annulable(app)

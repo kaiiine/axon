@@ -1,9 +1,10 @@
 import { get, writable } from 'svelte/store';
 import { entrance, finishEntrance } from './entrance';
 import { isNative, post } from './bridge';
-import type { AgentState, Model, PageSuivi, Request, View } from './types';
+import type { AgentState, Model, ModeNatif, PageSuivi, Rappel, Request, View } from './types';
+import { lireRappel, titreDuRappel, type IdAction } from './rappels';
 import { INTEGRATIONS } from './integrations';
-const fresh = (): Model => ({ view:'home', state:'idle', connected:false, visible:true, demo:false, detail:'', draft:'', messages:[], activity:[], requests:[], commands:[], file:null, busy:false, motion:true, sound:false, notice:'', unread:0, integration:null, integrationData:{}, attachments:[], dragActif:false, creationSuivi:null, actionEtudes:null, pageSuivi:null, flux:{} });
+const fresh = (): Model => ({ popup:null, rappels:[], enDirect:'', view:'home', state:'idle', connected:false, visible:true, demo:false, detail:'', draft:'', messages:[], activity:[], requests:[], commands:[], file:null, busy:false, motion:true, sound:false, notice:'', unread:0, integration:null, integrationData:{}, attachments:[], dragActif:false, creationSuivi:null, actionEtudes:null, pageSuivi:null, flux:{} });
 export const model = writable<Model>(fresh());
 let serial=0, unlock: ReturnType<typeof setTimeout> | undefined, realTraffic=false;
 const txt=(v:unknown):string=>v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -13,8 +14,71 @@ const object=(v:unknown):v is Record<string,unknown>=>typeof v==='object' && v!=
 //: un bug : `undefined` (= "jamais lancé") est le repli sûr.
 const statutGeneration=(v:unknown):'en_cours'|'terminee'|'echouee'|undefined=>
   v==='en_cours'||v==='terminee'||v==='echouee'?v:undefined;
-function nativeMode(view:View){return view==='home' ? 'accueil' : 'detail';}
-export function navigate(view:View){finishEntrance();const previous=get(model).view;model.update(s=>({...s,view,unread:view==='chat'?0:s.unread,integration:view==='integrations'?s.integration:null}));if(nativeMode(view)!==nativeMode(previous))post({type:'mode',mode:nativeMode(view)});}
+//: Dépliée, la notification sert d'abord les demandes ; sans demande, c'est la
+//: bulle d'un rappel.
+function nativeMode(s:Pick<Model,'view'|'popup'|'requests'>=get(model)):ModeNatif{
+  if(s.popup)return !s.popup.deplie?'pastille':s.requests.length?'notif':'bulle';
+  return s.view==='home'?'accueil':'detail';
+}
+//: Naviguer quitte toujours la notification : « détails » y mène au chat.
+export function navigate(view:View){finishEntrance();const previous=nativeMode();model.update(s=>({...s,view,popup:null,unread:view==='chat'?0:s.unread,integration:view==='integrations'?s.integration:null}));if(nativeMode()!==previous)post({type:'mode',mode:nativeMode()});}
+//: Durée de l'animation « envoyé » avant que la notification rende la main.
+export const SORTIE_POPUP_MS=650;
+let sortiePopup: ReturnType<typeof setTimeout> | undefined;
+//: Le survol déplie la pastille en notification ; s'en éloigner la replie —
+//: sauf si l'île était ouverte avant la demande (rien à replier), ou si la
+//: réponse est déjà partie.
+export function deplierPopup(){const p=get(model).popup;if(!p||p.deplie)return;hauteurNotif=0;model.update(s=>({...s,popup:s.popup&&{...s.popup,deplie:true}}));post({type:'mode',mode:nativeMode()});}
+export function replierPopup(){const p=get(model).popup;if(!p||!p.deplie||!p.fermer||p.envoye)return;model.update(s=>({...s,popup:s.popup&&{...s.popup,deplie:false},requests:s.requests.map((r,i)=>i===0?{...r,freeform:false}:r)}));post({type:'mode',mode:'pastille'});}
+//: Hauteur voulue par la notification dépliée (mesurée par `Popup`) : la
+//: fenêtre native suit, bornée par overlay.py. Pas de message si rien ne change.
+let hauteurNotif=0;
+export function ajusterNotif(hauteur:number){const h=Math.round(hauteur);const p=get(model).popup;if(!p||!p.deplie||h===hauteurNotif)return;hauteurNotif=h;post({type:'mode',mode:nativeMode(),hauteur:h});}
+//: Une demande, île fermée : une pastille, que le survol déplie. Île ouverte
+//: sur une vue : la notification directement. Un rappel (`deplier`) s'ouvre
+//: toujours déplié : c'est Axon qui vient le dire.
+function ouvrirPopup(deplier=false){
+  const s=get(model),avant=nativeMode(s);
+  clearTimeout(sortiePopup);
+  model.update(s=>({...s,popup:{fermer:s.popup?s.popup.fermer:!s.visible,envoye:false,deplie:deplier||(s.popup?s.popup.deplie:s.visible)}}));
+  if(s.visible&&nativeMode()!==avant)post({type:'mode',mode:nativeMode()});
+}
+function retirerRappel(id:string):Rappel|undefined{
+  const rappel=get(model).rappels.find(r=>r.id===id);
+  model.update(s=>({...s,rappels:s.rappels.filter(r=>r.id!==id)}));
+  return rappel;
+}
+//: « Compris » : le rappel est lu, la notification se referme s'il n'y a rien d'autre.
+export function fermerRappel(id:string){retirerRappel(id);finirPopup('C’est noté');}
+//: « Voir les études » : le rappel est lu, l'île s'ouvre sur les études.
+export function voirRappel(id:string){retirerRappel(id);ouvrirEtudes();}
+//: Une action de la bulle (voir rappels.ts pour celles proposées).
+export function agirSurRappel(id:string,action:IdAction){
+  if(action==='compris')return fermerRappel(id);
+  if(action==='etudes')return voirRappel(id);
+  if(action==='plus_tard'){if(get(model).popup?.fermer)replierPopup();else fermerRappel(id);return;}
+  const rappel=retirerRappel(id);
+  if(!rappel)return;
+  if(action==='suivi'&&rappel.suiviId)ouvrirSuivi(rappel.suiviId);
+  else if(action==='point'&&rappel.suiviId)demanderAxon(`Faisons le point sur le suivi ${rappel.suiviId}, à l’approche de « ${titreDuRappel(rappel)} ».`);
+  else if(action==='conversation'){log('axon',rappel.texte);navigate('chat');}
+}
+const enAttente=(s:Model)=>s.requests.length+s.rappels.length;
+//: Plus rien à demander : la notification joue sa sortie, puis l'île se
+//: referme si elle l'était avant la demande, ou revient à sa vue.
+function finirPopup(texte?:string){
+  const p=get(model).popup;
+  if(!p||enAttente(get(model)))return;
+  model.update(s=>({...s,popup:s.popup&&{...s.popup,envoye:true,texte}}));
+  clearTimeout(sortiePopup);
+  sortiePopup=setTimeout(()=>{
+    const s=get(model);
+    if(!s.popup||enAttente(s)){model.update(s=>({...s,popup:s.popup&&{...s.popup,envoye:false}}));return;}
+    model.update(s=>({...s,popup:null}));
+    if(p.fermer)close();
+    post({type:'mode',mode:nativeMode()});
+  },get(model).motion?SORTIE_POPUP_MS:0);
+}
 export function openIntegration(id:string|null){
   model.update(s=>({...s,integration:id}));navigate('integrations');
   const meta=id?INTEGRATIONS.find(i=>i.id===id):undefined;
@@ -183,14 +247,17 @@ export function archiverSuivi(suiviId:string):string|undefined{
   post({type:'archiver_suivi',id,suivi_id:suiviId});
   return id;
 }
-export function open(visible:boolean){const previous=get(model).visible;model.update(s=>({...s,visible}));if(!visible)finishEntrance();else{if(!previous&&get(model).motion&&!get(model).requests.length)entrance.set('armed');post({type:'mode',mode:nativeMode(get(model).view)});}}
+//: L'arrivée de la mascotte ne joue que sur l'accueil : une notification ou une
+//: bulle a sa propre animation, et cache la mascotte que l'arrivée attendrait.
+const arriveeLibre=(s:Model)=>s.motion&&!s.requests.length&&!s.popup;
+export function open(visible:boolean){const previous=get(model).visible;model.update(s=>({...s,visible}));if(!visible)finishEntrance();else{if(!previous&&arriveeLibre(get(model)))entrance.set('armed');post({type:'mode',mode:nativeMode()});}}
 export function startEntrance(){if(get(entrance)==='armed'&&get(model).visible)entrance.set('playing');}
-export function replayEntrance(){const s=get(model);if(!s.visible||!s.motion||s.requests.length)return;finishEntrance();queueMicrotask(()=>{const current=get(model);if(current.visible&&current.motion&&!current.requests.length)entrance.set('playing');});}
+export function replayEntrance(){const s=get(model);if(!s.visible||!arriveeLibre(s))return;finishEntrance();queueMicrotask(()=>{const current=get(model);if(current.visible&&arriveeLibre(current))entrance.set('playing');});}
 export function close(){post({type:'ouvrir',ouvert:false});}
 export function setDraft(draft:string){model.update(s=>({...s,draft}));}
 export function notice(message:string){model.update(s=>({...s,notice:message}));}
 function log(who:'axon'|'toi',text:string){model.update(s=>({...s,messages:[...s.messages,{id:++serial,who,text}].slice(-200),unread:who==='axon'&&s.view!=='chat'?s.unread+1:s.unread}));}
-export function reset(){finishEntrance();clearTimeout(unlock);model.set(fresh());realTraffic=false;}
+export function reset(){finishEntrance();clearTimeout(unlock);clearTimeout(sortiePopup);model.set(fresh());realTraffic=false;}
 export function receive(value:unknown){
   if(!object(value)||typeof value.type!=='string')return;
   if(get(model).demo){const s=get(model);model.set({...fresh(),motion:s.motion,sound:s.sound});}
@@ -206,6 +273,7 @@ function handle(m:Record<string,unknown>){
       // ou purgée PENDANT la coupure resterait affichée comme avant (§1,
       // lot 3 : « une reconnexion doit retrouver l'état réel »).
       const panneauxOuverts=connected?Object.keys(get(model).integrationData):[];
+      if(!connected&&get(model).enDirect){log('axon',get(model).enDirect);model.update(s=>({...s,enDirect:''}));}
       model.update(s=>{
         // Une création de suivi en vol dont la réponse n'arrivera jamais
         // (connexion perdue avant `creer_suivi_resultat`/`_erreur`) doit
@@ -219,7 +287,7 @@ function handle(m:Record<string,unknown>){
           :s.actionEtudes;
         const flux:typeof s.flux={};
         for(const [id,f] of Object.entries(s.flux))flux[id]=!connected&&f.statut==='en_cours'?{...f,statut:'erreur',message:'Connexion à Axon perdue.'}:f;
-        return {...s,flux,connected,requests:connected?s.requests:[],integrationData:connected?s.integrationData:{},attachments:connected?s.attachments:[],dragActif:false,busy:false,state:connected?'idle':'sleeping',notice:'',creationSuivi,actionEtudes};
+        return {...s,flux,connected,popup:connected||s.rappels.length?s.popup:null,requests:connected?s.requests:[],integrationData:connected?s.integrationData:{},attachments:connected?s.attachments:[],dragActif:false,busy:false,state:connected?'idle':'sleeping',notice:'',creationSuivi,actionEtudes};
       });
       clearTimeout(unlock);
       if(connected&&!get(model).demo){
@@ -244,16 +312,27 @@ function handle(m:Record<string,unknown>){
       break;
     }
     case 'fichier':case 'diff':file(m);break;
-    case 'message':log('axon',txt(m.texte));break;
+    case 'reponse_flux':model.update(s=>({...s,enDirect:txt(m.texte),state:'thinking'}));break;
+    case 'message':log('axon',txt(m.texte));model.update(s=>({...s,enDirect:''}));break;
     case 'confirmation':case 'demande': {
       if(typeof m.id!=='string'&&typeof m.id!=='number')break;
       const legacy=m.type==='confirmation';
-      const questions=legacy?[{texte:txt(m.raison)||'Autoriser cette commande ?',choix:['Autoriser','Refuser'],affirmatif:'Autoriser',libre:true}]:Array.isArray(m.questions)?m.questions.filter(object).map(q=>({texte:txt(q.texte),choix:Array.isArray(q.choix)?q.choix.filter((c):c is string=>typeof c==='string'):[],affirmatif:txt(q.affirmatif),libre:q.libre!==false})):[];
-      if(!questions.length)questions.push({texte:txt(m.cle)||'Ta réponse est nécessaire.',choix:[],affirmatif:'',libre:true});
+      const questions=legacy?[{texte:txt(m.raison)||'Autoriser cette commande ?',choix:['Autoriser','Refuser'],affirmatif:'Autoriser',libre:true}]:Array.isArray(m.questions)?m.questions.filter(object).map(q=>({texte:txt(q.texte),choix:Array.isArray(q.choix)?q.choix.filter((c):c is string=>typeof c==='string'):[],affirmatif:txt(q.affirmatif),libre:q.libre!==false,si:txt(q.si)})):[];
+      if(!questions.length)questions.push({texte:txt(m.cle)||'Ta réponse est nécessaire.',choix:[],affirmatif:'',libre:true,si:''});
       const request:Request={id:m.id,genre:txt(m.genre),apercu:txt(legacy?m.commande:m.apercu),questions,answers:[],legacy};
-      model.update(s=>{const index=s.requests.findIndex(p=>p.id===request.id);const requests=[...s.requests];if(index<0)requests.push(request);else{const previous=requests[index];requests[index]={...request,answers:JSON.stringify(previous.questions)===JSON.stringify(request.questions)?previous.answers:[]};}return {...s,requests,state:'waiting'};});navigate('chat');notifySound();break;
+      model.update(s=>{const index=s.requests.findIndex(p=>p.id===request.id);const requests=[...s.requests];if(index<0)requests.push(request);else{const previous=requests[index];requests[index]={...request,answers:JSON.stringify(previous.questions)===JSON.stringify(request.questions)?previous.answers:[]};}return {...s,requests,state:'waiting'};});
+      // Dans le chat, la carte s'affiche déjà sur place. Partout ailleurs —
+      // île fermée comprise — une petite notification, sans quitter la vue.
+      {const s=get(model);if(!(s.visible&&s.view==='chat'&&!s.popup))ouvrirPopup();}
+      notifySound();break;
     }
-    case 'annulation':model.update(s=>({...s,requests:s.requests.filter(p=>p.id!==m.id),state:s.connected?'idle':'sleeping'}));break;
+    case 'rappel': {
+      const r=lireRappel(m,`rappel-${++serial}`);
+      model.update(s=>({...s,rappels:[...s.rappels.filter(x=>x.id!==r.id),r]}));
+      // Toujours en bulle, même dans le chat : le chat n'affiche pas les rappels.
+      ouvrirPopup(true);notifySound();break;
+    }
+    case 'annulation':model.update(s=>({...s,requests:s.requests.filter(p=>p.id!==m.id),state:s.connected?'idle':'sleeping'}));finirPopup();break;
     case 'raccourci_resultat': {
       const action=txt(m.action);
       if(!action)break;
@@ -372,6 +451,10 @@ export function answer(text:string){
   const reponse=reponseAcceptee(q,text,!!p.freeform);
   if(reponse===null){notice(`Choisis une des réponses proposées : ${q.choix.join(', ')}.`);return;}
   const answers=[...p.answers,reponse];
+  // Une question conditionnelle (`si`) qui ne s'applique pas est sautée et vaut
+  // "" : sinon « Que faut-il changer ? » restait affichée après « Exécuter le
+  // plan », rien ne partait et le CLI attendait — tout semblait bloqué.
+  while(answers.length<p.questions.length){const suivante=p.questions[answers.length];if(!suivante.si||suivante.si===answers[answers.length-1])break;answers.push('');}
   const derniere=answers.length===p.questions.length;
   if(derniere&&!s.demo){
     const ok=post(p.legacy?{type:'decision',id:p.id,accord:reponse==='Autoriser'}:{type:'reponse_demande',id:p.id,reponses:answers});
@@ -381,6 +464,7 @@ export function answer(text:string){
   model.update(s=>({...s,draft:'',busy:true,requests:derniere?s.requests.slice(1):[{...p,answers,freeform:false},...s.requests.slice(1)],state:derniere?'working':'waiting'}));
   clearTimeout(unlock);
   unlock=setTimeout(()=>model.update(s=>({...s,busy:false})),300);
+  if(derniere)finirPopup();
 }
 // « Autre » n'arrive jamais dans `choix` (l'agent a pour consigne de ne pas
 // l'ajouter, voir src/agents/clarify/tools.py) : c'est à l'interface de

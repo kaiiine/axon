@@ -25,6 +25,7 @@ from __future__ import annotations
 import pytest
 
 from src.orchestrator.routage.registry import build_all_tools
+from src.orchestrator.routage.skills_lies import appliquer_les_skills, groupes_neutralises
 from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever, _TOP_GROUPS
 
 
@@ -397,12 +398,17 @@ def retriever(tmp_path_factory):
     return ToolRetriever(build_all_tools())
 
 
+def _liees(retriever, requete):
+    """Les outils tels que le modèle les reçoit : le classement des groupes, puis
+    `load_skill`, que `skills_lies` lie hors classement."""
+    return {t.name for t in appliquer_les_skills(retriever.get(requete), requete, "orchestrator")}
+
+
 # ── ce qui décide ───────────────────────────────────────────────────────────────
 def test_jeu_de_reference_complet(retriever):
     """L'outil attendu doit être dans la sélection — pas « bien classé »: un outil
     non sélectionné n'est pas lié au modèle, donc il n'existe pas."""
-    manquants = [(q, tool) for q, tool in REFERENCE
-                 if tool not in {t.name for t in retriever.get(q)}]
+    manquants = [(q, tool) for q, tool in REFERENCE if tool not in _liees(retriever, q)]
     assert not manquants, "requêtes sans leur outil : " + "; ".join(
         f'"{q}" → {t}' for q, t in manquants)
 
@@ -448,6 +454,10 @@ def test_corpus_par_groupe(retriever):
     rapport, sous_seuil = [], []
     total = reussis = 0
     for groupe, phrases in CORPUS.items():
+        if groupe in groupes_neutralises():
+            # Retiré du classement : `load_skill` est lié hors compétition, et son
+            # atteinte se mesure sur le jeu de référence ci-dessus.
+            continue
         echecs = [p for p in phrases if groupe not in retriever._rank_groups(p)]
         ok = len(phrases) - len(echecs)
         total += len(phrases)

@@ -51,13 +51,16 @@ def test_sa_description_alimente_le_routage_des_skills():
     "clique sur le bouton accepter de la page",
 ])
 def test_une_intention_de_navigation_atteint_load_skill(requete):
-    """« remplis le formulaire de contact » n'y figure pas : mesuré, il ne route
-    pas. La description du skill est en anglais comme celles du registre, et
-    aucun de ses mots ne rapproche cette tournure française. Connu, pas masqué."""
+    """Ce que le modèle reçoit : le classement, puis `load_skill` lié hors
+    classement. Avant, il fallait que le groupe des skills soit élu — et
+    « remplis le formulaire de contact » ne routait pas, la description du skill
+    étant en anglais."""
     from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.skills_lies import appliquer_les_skills
     from src.orchestrator.routage.tool_retriever import ToolRetriever
 
-    outils = {t.name for t in ToolRetriever(build_all_tools()).get(requete)}
+    elus = ToolRetriever(build_all_tools()).get(requete)
+    outils = {t.name for t in appliquer_les_skills(elus, requete, "orchestrator")}
     assert "load_skill" in outils, f"« {requete} » n'atteint aucun skill"
 
 
@@ -67,7 +70,9 @@ def test_une_intention_de_navigation_atteint_load_skill(requete):
     "lis le fichier src/main.py",
 ])
 def test_le_quotidien_ne_charge_pas_de_skill(requete):
-    """Un skill chargé coûte des tokens sur un tour qui n'en a pas besoin."""
+    """Le classement n'élit plus `load_skill` de lui-même : il est lié hors
+    classement (`skills_lies`), à un coût permanent mesuré, et non par un groupe
+    qui gagnerait sur un tour qui n'en a pas besoin."""
     from src.orchestrator.routage.registry import build_all_tools
     from src.orchestrator.routage.tool_retriever import ToolRetriever
 

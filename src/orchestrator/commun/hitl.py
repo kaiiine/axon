@@ -49,6 +49,13 @@ class Question:
     #: picker comme /backend — un backend qui n'existe pas serait juste
     #: rejeté), donc pas d'« Autre » à proposer du tout.
     libre: bool = True
+    #: Vide (défaut) : la question est toujours posée. Sinon, elle ne l'est que
+    #: si la réponse à la question PRÉCÉDENTE vaut ce libellé — « Que faut-il
+    #: changer ? » n'a de sens qu'après « Préciser ». Sans ce champ, l'île
+    #: posait la seconde question même après « Exécuter le plan » et
+    #: n'envoyait rien tant qu'on n'y répondait pas : le CLI attendait, tout
+    #: semblait bloqué. Une question sautée vaut "".
+    si: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,7 +80,8 @@ class Demande:
             "apercu": self.apercu,
             "extra": dict(self.extra),
             "questions": [{"texte": q.texte, "choix": list(q.choix),
-                           "affirmatif": q.affirmatif, "libre": q.libre}
+                           "affirmatif": q.affirmatif, "libre": q.libre,
+                           "si": q.si}
                           for q in self.questions],
         }
 
@@ -86,7 +94,8 @@ class Demande:
             extra=dict(brut.get("extra") or {}),
             questions=tuple(
                 Question(texte=q.get("texte", ""), choix=tuple(q.get("choix") or ()),
-                         affirmatif=q.get("affirmatif", ""), libre=q.get("libre", True))
+                         affirmatif=q.get("affirmatif", ""), libre=q.get("libre", True),
+                         si=q.get("si", ""))
                 for q in (brut.get("questions") or [])),
         )
 

@@ -96,3 +96,105 @@ def test_les_reessais_epuises_renoncent_franchement():
 def test_le_plafond_de_reessais_reste_borne():
     """Sans borne, une panne durable boucle au lieu de rendre la main."""
     assert 1 <= MAX_TRANSIENT_RETRIES <= 5
+
+
+# ── Une panne serveur répétée : une relance reformulée, outils gardés ─────────
+class _LLMQuiNote:
+    """Lève tant qu'on lui donne des erreurs ; garde ce qu'il a reçu."""
+
+    def __init__(self, *erreurs):
+        self.restantes = list(erreurs)
+        self.recus: list = []
+
+    def invoke(self, messages):
+        self.recus.append(list(messages))
+        if self.restantes:
+            raise self.restantes.pop(0)
+        return "ok"
+
+    def bind_tools(self, tools):
+        return self
+
+
+def _invoquer_sans_attente(llm):
+    from src.orchestrator.modele.invocation import invoke_with_recovery
+    return invoke_with_recovery(
+        llm, [], backend="ollama_cloud", factory=lambda: llm, selected_tools=[],
+        force_text=False, on_compress=lambda: None, sleep=lambda _s: None)
+
+
+def test_quatre_500_d_affilee_donnent_une_relance_reformulee():
+    """Vécu : quatre 500 sur la même requête, le tour mourait avec deux
+    échéances créées sur cinq. Réémettre à l'identique ne changeait rien."""
+    panne = Exception("Internal Server Error (ref: x) (status code: 500)")
+    llm = _LLMQuiNote(*[panne] * (MAX_TRANSIENT_RETRIES + 1))
+
+    assert _invoquer_sans_attente(llm).response == "ok"
+    derniere = llm.recus[-1]
+    assert "[SYSTEME] Le serveur du modèle a échoué" in str(derniere[-1].content)
+    assert all("[SYSTEME]" not in str(m) for m in llm.recus[0])
+
+
+def test_la_relance_reformulee_n_a_lieu_qu_une_fois():
+    panne = Exception("Internal Server Error (status code: 500)")
+    llm = _LLMQuiNote(*[panne] * (MAX_TRANSIENT_RETRIES + 3))
+
+    with pytest.raises(Exception, match="Internal Server Error"):
+        _invoquer_sans_attente(llm)
+    assert len(llm.recus) == MAX_TRANSIENT_RETRIES + 2
+
+
+def test_une_coupure_reseau_ne_declenche_pas_de_reformulation():
+    coupure = Exception("connection reset")
+    llm = _LLMQuiNote(*[coupure] * (MAX_TRANSIENT_RETRIES + 1))
+
+    with pytest.raises(Exception, match="connection reset"):
+        _invoquer_sans_attente(llm)
+    assert len(llm.recus) == MAX_TRANSIENT_RETRIES + 1
+
+
+# ── Un quota sans autre clé : une courte attente, puis on renonce ─────────────
+def test_un_quota_sans_autre_cle_attend_puis_reussit(monkeypatch):
+    """Vécu : « Hello ça va ? » → 429 de Mistral, une seule clé, abandon
+    immédiat. Une limite par seconde se lève en attendant."""
+    from src.orchestrator.modele import invocation
+    monkeypatch.setattr(invocation, "_log_failure", lambda *a, **k: None)
+    attentes = []
+    quota = Exception("Error response 429: Rate limit exceeded")
+    llm = _LLMQuiNote(quota)
+    issue = invocation.invoke_with_recovery(
+        llm, [], backend="mistral", factory=lambda: llm, selected_tools=[], force_text=False,
+        on_compress=lambda: None, sleep=attentes.append)
+    assert issue.response == "ok"
+    assert attentes == [invocation.DELAI_QUOTA_S]
+
+
+def test_un_quota_qui_persiste_finit_par_une_erreur(monkeypatch):
+    from src.orchestrator.modele import invocation
+    monkeypatch.setattr(invocation, "_log_failure", lambda *a, **k: None)
+    attentes = []
+    llm = _LLMQuiNote(*[Exception("429 Too Many Requests")] * (invocation.MAX_ATTENTES_QUOTA + 1))
+    with pytest.raises(Exception, match="429"):
+        invocation.invoke_with_recovery(
+            llm, [], backend="mistral", factory=lambda: llm, selected_tools=[], force_text=False,
+            on_compress=lambda: None, sleep=attentes.append)
+    assert len(attentes) == invocation.MAX_ATTENTES_QUOTA
+
+
+def test_un_modele_hors_offre_ne_fait_pas_attendre_pour_rien(monkeypatch):
+    """Vécu : `mistral-small-2603` répond 429 avec une limite de 0 requête par
+    minute — le modèle n'est pas dans l'offre. Attendre ne lève rien."""
+    from types import SimpleNamespace
+
+    from src.orchestrator.modele import invocation
+    monkeypatch.setattr(invocation, "_log_failure", lambda *a, **k: None)
+    hors_offre = Exception("Error response 429: Rate limit exceeded")
+    hors_offre.response = SimpleNamespace(headers={"x-ratelimit-limit-req-minute": "0"})
+    attentes = []
+    llm = _LLMQuiNote(hors_offre)
+    with pytest.raises(Exception, match="429"):
+        invocation.invoke_with_recovery(
+            llm, [], backend="mistral", factory=lambda: llm, selected_tools=[], force_text=False,
+            on_compress=lambda: None, sleep=attentes.append)
+    assert attentes == []
+    assert invocation.modele_hors_offre(hors_offre)

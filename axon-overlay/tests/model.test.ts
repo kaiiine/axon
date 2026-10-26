@@ -1,6 +1,6 @@
 import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
 import {get} from 'svelte/store';
-import {model,reset,receive,navigate,setDraft,submit,answer,chooseFreeform,open,openIntegration,demanderRaccourci,demanderDetail,demanderPicker,detacherPiece,creerSuivi,majEcheance,demanderFlux,ouvrirSuivi} from '../ui/src/model';
+import {SORTIE_POPUP_MS,agirSurRappel,fermerRappel,voirRappel,ajusterNotif,deplierPopup,replierPopup,model,reset,receive,navigate,setDraft,submit,answer,chooseFreeform,open,openIntegration,demanderRaccourci,demanderDetail,demanderPicker,detacherPiece,creerSuivi,majEcheance,demanderFlux,ouvrirSuivi} from '../ui/src/model';
 describe('contrat Axon et état stable',()=>{
  let post=vi.fn();
  beforeEach(()=>{reset();post=vi.fn();window.webkit={messageHandlers:{axon:{postMessage:post}}};});
@@ -41,6 +41,191 @@ describe('contrat Axon et état stable',()=>{
   answer('ok');
   expect(post).not.toHaveBeenCalled();
   expect(get(model).notice).toContain('pas été envoyée');
+ });
+ it('une question conditionnelle sautée envoie la réponse tout de suite',()=>{
+  // Avant : « Que faut-il changer ? » restait affichée après « Exécuter le plan », rien ne partait, le CLI attendait.
+  receive({type:'connexion',connecte:true});
+  receive({type:'demande',id:4,genre:'plan',questions:[{texte:'Ce plan te convient ?',choix:['Abandonner','Préciser','Exécuter le plan'],affirmatif:'Exécuter le plan'},{texte:'Que faut-il changer ?',choix:[],si:'Préciser'}]});
+  answer('Exécuter le plan');
+  expect(post).toHaveBeenLastCalledWith({type:'reponse_demande',id:4,reponses:['Exécuter le plan','']});
+  expect(get(model).requests).toHaveLength(0);
+ });
+ it('une question conditionnelle qui s’applique est bien posée',()=>{
+  vi.useFakeTimers();
+  receive({type:'connexion',connecte:true});
+  receive({type:'demande',id:5,questions:[{texte:'?',choix:['Préciser','Exécuter le plan']},{texte:'Que faut-il changer ?',choix:[],si:'Préciser'}]});
+  post.mockClear();
+  answer('Préciser');
+  expect(post.mock.calls.filter(c=>c[0].type==='reponse_demande')).toHaveLength(0);
+  vi.advanceTimersByTime(400);
+  answer('ajoute des tests');
+  expect(post).toHaveBeenLastCalledWith({type:'reponse_demande',id:5,reponses:['Préciser','ajoute des tests']});
+  vi.useRealTimers();
+ });
+ it('île fermée : une pastille apparaît, le survol la déplie, et l’île se referme une fois répondu',()=>{
+  vi.useFakeTimers();
+  receive({type:'connexion',connecte:true});open(false);post.mockClear();
+  receive({type:'demande',id:6,genre:'autorisation',questions:[{texte:'Lancer ?',choix:['Non','Oui'],affirmatif:'Oui'}]});
+  expect(get(model).view).toBe('home');
+  expect(get(model).popup).toEqual({fermer:true,envoye:false,deplie:false});
+  open(true);
+  expect(post).toHaveBeenLastCalledWith({type:'mode',mode:'pastille'});
+  deplierPopup();
+  expect(post).toHaveBeenLastCalledWith({type:'mode',mode:'notif'});
+  answer('Oui');
+  expect(post).toHaveBeenCalledWith({type:'reponse_demande',id:6,reponses:['Oui']});
+  expect(get(model).popup?.envoye).toBe(true);
+  post.mockClear();
+  vi.advanceTimersByTime(SORTIE_POPUP_MS+1);
+  expect(get(model).popup).toBeNull();
+  expect(post.mock.calls.map(c=>c[0])).toEqual([{type:'ouvrir',ouvert:false},{type:'mode',mode:'accueil'}]);
+  vi.useRealTimers();
+ });
+ it('s’éloigner replie la pastille, et oublie un « Autre » commencé',()=>{
+  receive({type:'connexion',connecte:true});open(false);
+  receive({type:'demande',id:11,genre:'clarification',questions:[{texte:'?',choix:['a','b']}]});
+  open(true);deplierPopup();chooseFreeform();post.mockClear();
+  replierPopup();
+  expect(get(model).popup?.deplie).toBe(false);
+  expect(get(model).requests[0].freeform).toBe(false);
+  expect(post).toHaveBeenLastCalledWith({type:'mode',mode:'pastille'});
+ });
+ it('la notification dépliée annonce sa hauteur, une fois par changement, jamais en pastille',()=>{
+  receive({type:'connexion',connecte:true});open(false);
+  receive({type:'demande',id:13,questions:[{texte:'?',choix:['a','b','c','d','e','f']}]});
+  open(true);post.mockClear();
+  ajusterNotif(200);
+  expect(post).not.toHaveBeenCalled();
+  deplierPopup();ajusterNotif(200);ajusterNotif(200.2);
+  expect(post.mock.calls.map(c=>c[0])).toEqual([{type:'mode',mode:'notif'},{type:'mode',mode:'notif',hauteur:200}]);
+ });
+ it('un rappel du démon ouvre directement la bulle, même sans CLI, et « Compris » referme l’île',()=>{
+  vi.useFakeTimers();
+  open(false);
+  receive({type:'rappel',id:'r1',titre:'Axon · Études',texte:'• Rendu CDS — dans 9 jours',genre:'recapitulatif'});
+  expect(get(model).rappels).toHaveLength(1);
+  expect(get(model).popup).toEqual({fermer:true,envoye:false,deplie:true});
+  open(true);
+  expect(post).toHaveBeenLastCalledWith({type:'mode',mode:'bulle'});
+  post.mockClear();
+  fermerRappel('r1');
+  expect(get(model).popup?.texte).toBe('C’est noté');
+  vi.advanceTimersByTime(SORTIE_POPUP_MS+1);
+  expect(get(model).popup).toBeNull();
+  expect(post).toHaveBeenCalledWith({type:'ouvrir',ouvert:false});
+  vi.useRealTimers();
+ });
+ it('les actions d’un rappel d’échéance mènent au suivi ou font le point avec Axon',()=>{
+  receive({type:'connexion',connecte:true});open(false);
+  receive({type:'rappel',id:'r5',titre:'Axon · Rappel · Rendu CDS',texte:'Dans 3 jours',genre:'echeance',suivi_id:'suivi_cds',echeance_id:'ech_1'});
+  post.mockClear();
+  agirSurRappel('r5','suivi');
+  expect(get(model).view).toBe('suivi');
+  expect(get(model).pageSuivi?.id).toBe('suivi_cds');
+  receive({type:'rappel',id:'r6',titre:'Axon · Rappel · Rendu CDS',texte:'Dans 3 jours',genre:'echeance',suivi_id:'suivi_cds'});
+  agirSurRappel('r6','point');
+  expect(post).toHaveBeenCalledWith({type:'commande',texte:'Faisons le point sur le suivi suivi_cds, à l’approche de « Rendu CDS ».'});
+  expect(get(model).rappels).toHaveLength(0);
+ });
+ it('« Plus tard » replie la bulle en pastille sans oublier le rappel',()=>{
+  open(false);
+  receive({type:'rappel',id:'r7',titre:'Rappel',texte:'x',genre:'echeance'});
+  open(true);post.mockClear();
+  agirSurRappel('r7','plus_tard');
+  expect(get(model).popup?.deplie).toBe(false);
+  expect(get(model).rappels).toHaveLength(1);
+  expect(post).toHaveBeenLastCalledWith({type:'mode',mode:'pastille'});
+ });
+ it('le résultat d’une tâche s’ouvre dans la conversation',()=>{
+  open(false);
+  receive({type:'rappel',id:'r8',titre:'Axon · Météo',texte:'Pluie demain',genre:'tache'});
+  agirSurRappel('r8','conversation');
+  expect(get(model).view).toBe('chat');
+  expect(get(model).messages.at(-1)?.text).toBe('Pluie demain');
+ });
+ it('une demande passe avant un rappel, qui reste affiché ensuite',()=>{
+  vi.useFakeTimers();
+  receive({type:'connexion',connecte:true});open(false);
+  receive({type:'rappel',id:'r2',titre:'Rappel',texte:''});
+  receive({type:'demande',id:20,questions:[{texte:'?',choix:['ok']}]});
+  answer('ok');
+  vi.advanceTimersByTime(SORTIE_POPUP_MS+1);
+  expect(get(model).popup).not.toBeNull();       // le rappel attend encore
+  expect(get(model).rappels).toHaveLength(1);
+  vi.useRealTimers();
+ });
+ it('« Voir les études » ouvre l’île sur les études',()=>{
+  open(false);
+  receive({type:'rappel',id:'r3',titre:'Rappel',texte:''});
+  voirRappel('r3');
+  expect(get(model).view).toBe('etudes');
+  expect(get(model).popup).toBeNull();
+  expect(get(model).rappels).toHaveLength(0);
+ });
+ it('la perte du CLI ne fait pas disparaître un rappel',()=>{
+  receive({type:'connexion',connecte:true});open(false);
+  receive({type:'rappel',id:'r4',titre:'Rappel',texte:''});
+  receive({type:'connexion',connecte:false});
+  expect(get(model).popup).not.toBeNull();
+ });
+ it('la réponse s’écrit en direct, puis le message final la remplace',()=>{
+  receive({type:'connexion',connecte:true});
+  receive({type:'reponse_flux',texte:'Je regarde'});
+  receive({type:'reponse_flux',texte:'Je regarde tes dépôts'});
+  expect(get(model).enDirect).toBe('Je regarde tes dépôts');
+  expect(get(model).messages).toHaveLength(0);
+  receive({type:'message',texte:'Je regarde tes dépôts.'});
+  expect(get(model).enDirect).toBe('');
+  expect(get(model).messages.map(m=>m.text)).toEqual(['Je regarde tes dépôts.']);
+ });
+ it('une connexion perdue garde ce qui était déjà écrit',()=>{
+  receive({type:'connexion',connecte:true});
+  receive({type:'reponse_flux',texte:'Début de réponse'});
+  receive({type:'connexion',connecte:false});
+  expect(get(model).enDirect).toBe('');
+  expect(get(model).messages.map(m=>m.text)).toEqual(['Début de réponse']);
+ });
+ it('une notification ouverte île ouverte ne se replie pas en pastille',()=>{
+  receive({type:'connexion',connecte:true});navigate('etudes');
+  receive({type:'demande',id:12,questions:[{texte:'?',choix:['ok']}]});
+  post.mockClear();replierPopup();
+  expect(get(model).popup?.deplie).toBe(true);
+  expect(post).not.toHaveBeenCalled();
+ });
+ it('île ouverte sur une vue : la notification ne la quitte pas, et y revient sans se fermer',()=>{
+  vi.useFakeTimers();
+  receive({type:'connexion',connecte:true});navigate('etudes');post.mockClear();
+  receive({type:'demande',id:7,questions:[{texte:'?',choix:['ok']}]});
+  expect(post).toHaveBeenLastCalledWith({type:'mode',mode:'notif'});
+  expect(get(model).popup?.fermer).toBe(false);
+  answer('ok');post.mockClear();
+  vi.advanceTimersByTime(SORTIE_POPUP_MS+1);
+  expect(get(model).view).toBe('etudes');
+  expect(post.mock.calls.map(c=>c[0])).toEqual([{type:'mode',mode:'detail'}]);
+  vi.useRealTimers();
+ });
+ it('dans le chat, la demande reste sur place, sans notification',()=>{
+  receive({type:'connexion',connecte:true});navigate('chat');
+  receive({type:'demande',id:8,questions:[{texte:'?',choix:['ok']}]});
+  expect(get(model).popup).toBeNull();
+ });
+ it('« détails » quitte la notification pour la conversation, la demande toujours en attente',()=>{
+  receive({type:'connexion',connecte:true});
+  receive({type:'demande',id:9,genre:'plan',apercu:'1. a\n2. b',questions:[{texte:'Ce plan te convient ?',choix:['Exécuter le plan']}]});
+  post.mockClear();navigate('chat');
+  expect(get(model).popup).toBeNull();
+  expect(get(model).requests).toHaveLength(1);
+  expect(post).toHaveBeenLastCalledWith({type:'mode',mode:'detail'});
+ });
+ it('une réponse donnée au terminal referme aussi la notification',()=>{
+  vi.useFakeTimers();
+  receive({type:'connexion',connecte:true});open(false);
+  receive({type:'demande',id:10,questions:[{texte:'?',choix:['ok']}]});
+  receive({type:'annulation',id:10});
+  vi.advanceTimersByTime(SORTIE_POPUP_MS+1);
+  expect(get(model).popup).toBeNull();
+  expect(post).toHaveBeenCalledWith({type:'ouvrir',ouvert:false});
+  vi.useRealTimers();
  });
  it('repart sans freeform sur la question suivante',()=>{vi.useFakeTimers();receive({type:'connexion',connecte:true});receive({type:'demande',id:0,questions:[{texte:'A ?',choix:['oui']},{texte:'B ?',choix:['oui']}]});chooseFreeform();answer('libre');expect(get(model).requests[0].freeform).toBe(false);vi.useRealTimers();});
  it('ouvrir une intégration connectée avec raccourci déclenche le raccourci et passe en chargement',()=>{receive({type:'connexion',connecte:true});post.mockClear();openIntegration('gmail');expect(post).toHaveBeenCalledWith(expect.objectContaining({type:'raccourci',action:'gmail_non_lus'}));expect(get(model).integrationData['gmail_non_lus'].status).toBe('loading');});

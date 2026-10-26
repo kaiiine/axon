@@ -52,6 +52,9 @@ from src.orchestrator.routage.catalogue import (
     outil as _outil_du_catalogue, serveurs_actifs as _serveurs_actifs,
 )
 from src.orchestrator.routage.ellipse import est_une_ellipse
+from src.orchestrator.routage.skills_lies import appliquer_les_skills as _appliquer_les_skills
+# Importé depuis ici par `agents/coding/specialist.py` et `outils/mesure_filet.py`.
+from src.orchestrator.routage.skills_lies import restreindre_les_skills as _restreindre_les_skills  # noqa: F401
 from src.orchestrator.commun.note_interne import est_interne
 from src.orchestrator.routage.tool_retriever import ToolRetriever
 
@@ -195,32 +198,6 @@ def _panneau_debug(selected_tools: list, working: list) -> None:
                         border_style="dim", title="prompt"))
 
 
-def _restreindre_les_skills(outils: list, requete: str, portee: str) -> list:
-    """Remplace `load_skill` par une version qui ne montre que ce qui concerne
-    la requête.
-
-    Son catalogue est DANS sa description : 49 skills, 2 241 tokens, à chaque
-    tour où l'outil est lié. C'est l'inverse de ce que fait le routage pour les
-    outils — et devant une liste pareille, le modèle n'en choisissait aucune.
-
-    Mesuré sur « fais-moi un site vitrine en Next.js » : 2 241 → 488 tokens, et
-    `nextjs` entre dans les cinq montrées, là où le classement dense seul le
-    plaçait cinquième derrière `fiche`, `exo` et `browser-driving`.
-
-    Un échec de restriction rend la liste entière : perdre des tokens vaut mieux
-    que cacher la skill qu'il fallait.
-    """
-    if not requete.strip() or not any(o.name == "load_skill" for o in outils):
-        return outils
-    try:
-        from src.skills.tools import make_load_skill
-
-        etroit = make_load_skill(portee, requete)
-    except Exception:                                        # noqa: BLE001
-        return outils
-    return [etroit if o.name == "load_skill" else o for o in outils]
-
-
 def _chat_node_factory():
     from src.llm.backends import fabriques as _fabriques
 
@@ -278,7 +255,7 @@ def _chat_node_factory():
             )
         selected_tools = retriever.get(query) + _mcp.select(
             query, actifs=_serveurs_actifs(state["messages"]))
-        selected_tools = _restreindre_les_skills(selected_tools, query, "orchestrator")
+        selected_tools = _appliquer_les_skills(selected_tools, query, "orchestrator")
 
         global _last_selected_tools
         _last_selected_tools = [t.name for t in selected_tools]

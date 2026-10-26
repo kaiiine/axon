@@ -235,6 +235,10 @@ class SkillRetriever:
                 "content": content.strip(),
                 "path": str(f),
                 "scope": _normalize_scope(meta.get("scope")),
+                # Annexe : chargeable par nom, jamais proposée au catalogue. Un fichier
+                # sans frontmatter n'a rien à proposer et en est une d'office.
+                "annexe": (not meta
+                           or str(meta.get("annexe", "")).strip().lower() in ("true", "oui", "1")),
             }
         self._ready = True
 
@@ -408,6 +412,11 @@ class SkillRetriever:
     def describe(self, scope: str|None=None) -> list[tuple[str, str]]:
         return [(n, s["description"]) for n, s in self._visible(scope).items()]
 
+    def routables(self, scope: str | None = None) -> list[tuple[str, str]]:
+        """Les skills que le modèle peut choisir seul — annexes exclues."""
+        return [(n, s["description"]) for n, s in self._visible(scope).items()
+                if not s["annexe"]]
+
     def anchors(self, scope: str|None=None) -> list[str]:
         """Phrases de retrieval déclarées par les skills, à défaut leur description
         — une description en mots-clés se retrouve mal."""
@@ -436,6 +445,11 @@ def list_skills(scope: str | None = None) -> list[str]:
 
 def describe_skills(scope: str | None = None) -> list[tuple[str, str]]:
     return _retriever.describe(scope)
+
+
+def skills_routables(scope: str | None = None) -> list[tuple[str, str]]:
+    """Les skills (nom, description) du catalogue, annexes exclues."""
+    return _retriever.routables(scope)
 
 
 def skill_anchors(scope: str|None = None) -> list[str]:
