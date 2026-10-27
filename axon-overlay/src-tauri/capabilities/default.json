@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "ile",
-  "description": "La page de l'île : uniquement ses échanges avec l'hôte.",
-  "windows": ["ile"],
-  "permissions": ["core:default"]
-}

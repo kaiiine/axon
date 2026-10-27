@@ -443,9 +443,9 @@ Generates flowcharts, sequence diagrams, class diagrams, ER diagrams, C4 contain
 Native notebook editing: reads cells with indices, edits cell-by-cell with HITL review, inserts new cells, runs and checks outputs. Never corrupts `.ipynb` JSON.
 
 ---
-## Desktop island (`axon-overlay/`)
+## Desktop island ([`axon-overlay`](https://github.com/kaiiine/axon-overlay))
 
-A small floating island anchored at the top of the screen (GTK4 +
+A plugin with its own repository — a small floating island anchored at the top of the screen (GTK4 +
 gtk4-layer-shell + WebKitGTK, Svelte front-end), talking to the running CLI
 over a local Unix socket (`$XDG_RUNTIME_DIR/axon/overlay.sock`, mode 0600).
 If the island is not running, Axon works exactly as before.
@@ -465,7 +465,7 @@ sudo pacman -S python-gobject gtk4 gtk4-layer-shell webkitgtk-6.0
 
 ```
 /plugin                      # pick "Axon Overlay" → Installer
-/plugin install ./axon-overlay   # or from the working tree, while developing it
+/plugin install https://github.com/kaiiine/axon-overlay.git   # explicit URL; or ./axon-overlay for a local working tree
 ```
 
 It lands in `~/.axon/plugins/axon-overlay`; open/close it with its
@@ -675,7 +675,7 @@ ollama pull qwen2.5:7b          # Local backend (optional)
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m pytest tests/ -q     # use venv/ if your install has no .venv
-cd axon-overlay && npm run check && npm test           # island: types + front-end tests
+# the island's own tests (types + front-end) live in its repository: npm run check && npm test
 ```
 
 **~4,570 tests**, plus the island's own front-end suite. They cover tool
@@ -698,7 +698,6 @@ ai-agent/
 ├── skills/                        # 48 skills (Markdown + frontmatter: scope, aliases, anchors)
 ├── outils/                        # Maintenance scripts (e.g. importing external agent catalogues)
 ├── docs/                          # Design notes, addenda, technical debt
-├── axon-overlay/                  # Desktop island: overlay.py (GTK) + ui/ (Svelte) + pont_axon.py
 │
 └── src/
     ├── ui/                        # Terminal (streaming, commands, completer, attachments)

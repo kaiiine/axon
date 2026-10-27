@@ -14,7 +14,7 @@ Seul le transport dépend du système :
   en première ligne, l'île ferme toute connexion qui ne le présente pas.
 
 Côté Python, ce module n'est que client : les serveurs sont l'île GTK (Linux)
-et l'enveloppe Tauri (`axon-overlay/shell`). Bibliothèque standard uniquement —
+et l'enveloppe Tauri (dépôt `axon-overlay`, `src-tauri`). Bibliothèque standard uniquement —
 l'île et le démon cron tournent sans le reste d'Axon.
 """
 from __future__ import annotations

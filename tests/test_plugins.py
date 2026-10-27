@@ -57,8 +57,14 @@ def test_un_manifeste_invalide_est_refuse_avant_tout(brut, message):
 
 
 def test_le_manifeste_de_l_overlay_respecte_le_contrat():
+    """L'île vit dans son propre dépôt (github.com/kaiiine/axon-overlay) : ce
+    contrat ne se vérifie que si une copie est présente à côté d'Axon."""
     from pathlib import Path
-    manifeste = Manifeste.lire(Path(__file__).resolve().parents[1] / "axon-overlay")
+    import pytest
+    dossier = Path(__file__).resolve().parents[1] / "axon-overlay"
+    if not (dossier / "plugin.json").is_file():
+        pytest.skip("axon-overlay n'est plus dans ce dépôt")
+    manifeste = Manifeste.lire(dossier)
     assert manifeste.capacites == {"ile", "notifications"}
     assert manifeste.pour("linux-wayland").installation == (("npm", "ci"), ("npm", "run", "build"))
 
