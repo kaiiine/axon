@@ -24,10 +24,35 @@ def pick(options: List[str], title: str = "", current: str = "") -> str | None:
     """
     Vertical list navigable with ↑↓. Returns selected option or None if cancelled.
     Pre-selects `current` if present in the list.
+
+    Essaie d'abord l'île si elle est connectée — même protocole que les autres
+    demandes (`src/orchestrator/commun/hitl.py`), pas un canal à part. Avant
+    ce correctif, /backend, /model, /mode et le wizard /spec ne proposaient ce
+    choix qu'au terminal, jamais à l'île, même avec elle ouverte et connectée.
+    Si l'île ne répond pas (absente, hors délai, déconnectée en cours de
+    route), on retombe sur le picker terminal ci-dessous — jamais de blocage
+    silencieux en attendant une île qui ne viendra pas.
     """
     if not options:
         return None
 
+    from src.orchestrator.commun.hitl import CLARIFICATION, Demande, Question
+    from src.ui.course_hitl import en_course
+    demande = Demande(
+        genre=CLARIFICATION, cle=title,
+        # libre=False : une valeur hors `options` n'a pas de sens ici (pas
+        # de "backend personnalisé"), donc pas d'« Autre » à proposer —
+        # contrairement à une vraie clarification, où `libre` reste True.
+        questions=(Question(texte=title or "Choisis une option", choix=tuple(options), libre=False),),
+    )
+    # Terminal ET île, la première réponse gagne (voir course_hitl.py). Une
+    # réponse de l'île hors `options` est annulée plutôt qu'acceptée au hasard.
+    return en_course(demande.en_clair(),
+                     lambda: _picker_terminal(options, current, title),
+                     lambda reponses: reponses[0] if reponses and reponses[0] in options else None)
+
+
+def _picker_terminal(options: list[str], current: str | None, title: str) -> str | None:
     try:
         start = options.index(current)
     except ValueError:
@@ -82,4 +107,5 @@ def pick(options: List[str], title: str = "", current: str = "") -> str | None:
         full_screen=False,
         mouse_support=False,
     )
-    return app.run()
+    from src.ui.course_hitl import executer_annulable
+    return executer_annulable(app)

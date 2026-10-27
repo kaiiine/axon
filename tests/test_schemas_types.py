@@ -24,7 +24,7 @@ comportementale, et elle ne peut pas vivre ici.
 """
 import pytest
 
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.routage.registry import build_all_tools
 
 
 def _defauts(schema: dict) -> list[str]:

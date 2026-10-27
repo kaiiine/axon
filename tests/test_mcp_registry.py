@@ -376,7 +376,7 @@ def test_11_artefact_preserve_sur_tout_le_pipeline_de_messages(monkeypatch):
     """
     from src.infra import redactor
     from src.infra.tools_cache import CACHEABLE_TOOLS
-    from src.orchestrator.graph import CachedToolNode
+    from src.orchestrator.noeuds.outils import CachedToolNode
 
     result = ToolResult(
         text="scène capturée, clé sk-ABCDEFGHIJKLMNOP dans les logs",

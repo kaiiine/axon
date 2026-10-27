@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.routage.registry import build_all_tools
 
 TOOLS = build_all_tools()
 
@@ -90,6 +90,6 @@ def test_ask_clarification_reste_typé():
 def test_l_outil_fautif_etait_epingle_partout():
     """Rappel de l'ampleur : ce n'était pas un outil rare mal typé, c'était celui
     que chaque sélection embarque."""
-    from src.orchestrator.tool_retriever import _PINNED_TOOLS
+    from src.orchestrator.routage.tool_retriever import _PINNED_TOOLS
 
     assert "ask_clarification" in _PINNED_TOOLS

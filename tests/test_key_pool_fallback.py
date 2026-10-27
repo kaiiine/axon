@@ -104,7 +104,7 @@ def test_cron_group_covers_daily_recurrence():
     """La description du groupe EST le document de l'étage 1 : ce qu'elle ne dit pas,
     le routing ne peut pas le retrouver. « fais-moi un récap tous les jours à 14h » ne
     matchait rien côté cron, et le modèle improvisait un script shell."""
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     covers = TOOL_GROUPS["cron"].covers.lower()
     for phrasing in ("tous les jours", "chaque", "quotidien", "récurrent", "heure fixe"):
@@ -123,7 +123,7 @@ def test_slack_group_covers_channel_phrasings():
     """Les descriptions des outils Slack contiennent « Slack », pas « canal » : sans ce
     vocabulaire dans la description du groupe, « envoie un retour sur le canal test-cron »
     ne matchait rien et l'agent demandait « est-ce un canal Slack ? » au lieu d'agir."""
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     covers = TOOL_GROUPS["slack"].covers.lower()
     for phrasing in ("canal", "salon", "poster", "message"):
@@ -134,8 +134,8 @@ def test_tool_names_in_groups_all_exist():
     """Un nom d'outil mal orthographié dans TOOL_GROUPS rend l'outil INTROUVABLE en
     silence (la sélection filtre par `t.name`), et un outil enregistré qu'aucun groupe
     ne réclame l'est tout autant : le routing ne passe que par les groupes."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import TOOL_GROUPS, _PINNED_TOOLS
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, _PINNED_TOOLS
 
     real = {t.name for t in build_all_tools()}
     declared = [n for spec in TOOL_GROUPS.values() for n in spec.tools]
@@ -151,7 +151,7 @@ def test_tool_names_in_groups_all_exist():
 def test_every_group_has_a_description():
     """Un groupe sans description est un groupe injoignable à l'étage 1 — il ne peut
     plus être élu, et ses outils disparaissent sans erreur."""
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     for name, spec in TOOL_GROUPS.items():
         assert len(spec.covers.strip()) >= 40, f"description trop maigre : {name}"

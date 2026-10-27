@@ -15,7 +15,7 @@ from pathlib import Path
 
 from src.agents.coding.pending import appliquer, pending_changes, snapshots
 from src.agents.coding.tools import propose_file_delete
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.routage.registry import build_all_tools
 from src.ui.plan_mode import BLOCKED_TOOLS
 
 
@@ -59,7 +59,7 @@ def test_un_dossier_est_refuse(tmp_path):
 
 
 def test_loutil_est_enregistre_et_routable():
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     assert "propose_file_delete" in {o.name for o in build_all_tools()}
     assert "propose_file_delete" in TOOL_GROUPS["filesystem"].tools

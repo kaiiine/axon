@@ -11,6 +11,11 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+# Exception : le front compilé de l'île est livré avec le dépôt (l'île charge
+# ce bundle tel quel, sans Node sur la machine qui fait le pull). La source map
+# reste locale.
+!axon-overlay/ui/dist/
+axon-overlay/ui/dist/*.map
 downloads/
 eggs/
 .eggs/

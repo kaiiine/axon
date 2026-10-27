@@ -3,22 +3,18 @@ from __future__ import annotations
 
 from langchain_core.tools import StructuredTool
 
+from src.skills.catalogue import BUDGET
+
 _TEMPLATE = """\
 Loads the guidelines WRITTEN FOR THIS PROJECT about a domain.
 
 Call this FIRST — before any other tool — whenever the request touches one of the
-skills below. This is not an optimisation you may skip when the task looks simple:
-these guidelines exist because the default approach already failed on this domain.
-Checking the list is unconditional; only the loading depends on a match.
+skills below. The check is unconditional; only the loading depends on a match.
+Alone in its turn: the action tool comes after you have read the result.
 
-Skills COMPOSE — call this tool once per skill that applies, not once total.
-A stack skill says WHAT to install and scaffold; a cross-cutting skill says HOW
-the result must behave or look. They answer different questions, so loading one
-never replaces the other. When a request names a stack AND a quality bar ("a
-site in <framework>, with a great design"), load both.
-
-Never name a skill here that the catalogue below does not list: this preamble is
-shared by every agent, and each one sees a different catalogue.
+Skills COMPOSE — call this tool once per skill that applies. A stack skill says WHAT
+to install and scaffold; a cross-cutting skill says HOW the result must behave or
+look ("a site in <framework>, with a great design" → load both).
 
 Available skills:
 {catalogue}
@@ -30,11 +26,9 @@ Returns:
 """
 
 
-#: Combien de skills on montre quand la requête est connue. Mesuré sur vingt
-#: requêtes dont on connaît la bonne réponse : le rappel est de 80 % à 3 et de
-#: 95 % à 5, et il ne bouge plus au-delà. Le catalogue entier coûtait 2 241
-#: tokens à chaque tour — et devant 49 entrées, le modèle n'en prenait aucune.
-BUDGET_SKILLS = 5
+#: Alias historique — le budget vit maintenant dans `catalogue.BUDGET`, avec la
+#: construction du catalogue. Gardé pour les appelants (tests, mesures).
+BUDGET_SKILLS = BUDGET
 
 
 def make_load_skill(scope: str, requete: str = "") -> StructuredTool:
@@ -45,14 +39,10 @@ def make_load_skill(scope: str, requete: str = "") -> StructuredTool:
     démarrage, quand aucune question n'est encore posée — on montre tout : mieux
     vaut un catalogue large qu'un catalogue deviné.
     """
-    from src.skills import describe_skills, get_skill, list_skills, skills_pertinentes
+    from src.skills import get_skill, list_skills
+    from src.skills.catalogue import texte as catalogue_texte
 
-    entries = describe_skills(scope)
-    if requete.strip():
-        retenues = set(skills_pertinentes(requete, scope, BUDGET_SKILLS))
-        if retenues:
-            entries = [(n, d) for n, d in entries if n in retenues]
-    catalogue = "\n".join(f"  - {n}: {d}" for n, d in entries) if entries else "  (aucun)"
+    catalogue = catalogue_texte(scope, requete)
 
     def _run(stack: str) -> str:
         result = get_skill(stack, scope=scope)

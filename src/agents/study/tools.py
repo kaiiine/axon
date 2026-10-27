@@ -1,4 +1,10 @@
-"""Study tools — save generated HTML revision sheets and exercises to disk."""
+"""Study tools — save generated HTML revision sheets and exercises to disk.
+
+Les outils `etude_*` (suivis, échéances, exercices, rappels, vérification)
+vivent dans `tools_suivi.py`, `tools_echeance.py`, `tools_progression.py` et
+`tools_verification.py` — ce fichier ne garde que son périmètre d'origine :
+la génération elle-même, via le skill fiche/exo.
+"""
 from __future__ import annotations
 
 import re
@@ -28,83 +34,118 @@ def _open_browser(path: Path) -> None:
         pass
 
 
+def _generer_via_skill(file_type: str, content_text: str) -> str:
+    """Rend une fiche/exo par le SEUL chemin qui produit une bonne page.
+
+    `skills/fiche.md` (315 lignes) impose une étape d'analyse obligatoire —
+    extraire chapitres, définitions, distinctions, pièges d'examen, checklist
+    anti-oubli — avant même d'écrire le HTML. Un modèle qui écrit le HTML lui-
+    même en pleine conversation n'a jamais vu ces règles : il improvise sur la
+    foi des ~26 lignes de design (couleurs, grille) recopiées dans le prompt
+    système, sans aucune discipline de CONTENU. D'où des fiches vagues,
+    « pas assez précises ».
+
+    Un seul chemin, une seule qualité — que la matière vienne d'un PDF ou
+    d'un résumé écrit par le modèle en conversation.
+    """
+    from langchain_core.messages import HumanMessage
+
+    from src.infra.settings import settings
+    from src.llm.models import make_orchestrator_llm_with_key
+    from src.llm.prompts import _LANG_INSTRUCTIONS
+    from src.llm.rotation import clients, marquer_echec, vaut_la_peine_de_reessayer
+    from src.ui.templates import charger
+
+    lang_instruction = _LANG_INSTRUCTIONS.get("fr", "")
+    if file_type == "exo":
+        prompt = charger("exo", content=content_text, lang=lang_instruction,
+                         type_exo="Mélange de QCM (60%) et questions ouvertes (40%).")
+    else:
+        prompt = charger("fiche", content=content_text, lang=lang_instruction)
+
+    # Une clé épuisée ne doit pas coûter la commande : on parcourt les
+    # clés du backend, puis celles des fournisseurs de repli.
+    html, derniere = "", None
+    for fournisseur, cle, llm in clients(settings.llm_backend, make_orchestrator_llm_with_key):
+        try:
+            reponse = llm.invoke([HumanMessage(content=prompt)])
+            html = reponse.content if isinstance(reponse.content, str) else str(reponse.content)
+            break
+        except Exception as exc:   # noqa: BLE001 — clé suivante
+            derniere = exc
+            marquer_echec(fournisseur, cle, exc)
+            if not vaut_la_peine_de_reessayer(exc):
+                break
+    if not html:
+        raise RuntimeError(derniere or "aucun fournisseur n'a répondu")
+    return html
+
+
 @tool("save_study_file")
 def save_study_file(
-    html: str = "",
+    content: str = "",
     file_type: str = "fiche",
     filename: str = "",
     pdf_path: str = "",
+    html: str = "",
+    suivi_id: str = "",
 ) -> dict:
     """
-    Generates and saves an HTML study file (revision sheet or interactive exercises) to disk,
-    then opens it in the browser.
+    Generates a well-designed HTML study file (revision sheet or interactive
+    exercises) and saves it to disk, then opens it in the browser.
 
-    Two modes:
-    - Direct HTML: pass html="<complete html>" — use when the PDF content is small enough to fit in context.
-    - From PDF path: pass pdf_path="/absolute/path/to/file.pdf" — use when the PDF is too large for
-      the conversation context. The tool reads the PDF, generates the HTML internally, and saves it.
+    Two ways to provide the material — BOTH go through the same skill-governed
+    pipeline (mandatory content analysis, then design), so quality never
+    depends on which one you pick:
+    - content: your OWN summary of everything to cover — definitions, models,
+      distinctions, examples, likely exam points. Write it as thorough
+      structured notes, NOT as HTML — the template designs the page from it.
+      Use this from a conversation, once the material has been discussed.
+    - pdf_path: absolute path to a PDF too large to inject in context. The
+      tool extracts and processes it internally.
+
+    `html` still exists as a raw escape hatch — pass a complete HTML document
+    only if you deliberately want to bypass the fiche/exo template. Prefer
+    `content` : it is what makes the page follow the actual design and
+    pedagogical rules instead of an improvised one.
 
     Args:
-        html:      complete HTML document (when generating inline)
+        content:   your structured recap of the material (preferred)
         file_type: "fiche" for revision sheets, "exo" for interactive exercises
         filename:  optional base name without extension (e.g. "algo_tri")
-        pdf_path:  absolute path to a PDF file (when the PDF is too large to inject in context)
+        pdf_path:  absolute path to a PDF file (when too large to inject in context)
+        html:      complete HTML document — bypasses the template, use only on purpose
+        suivi_id:  if this generation belongs to an existing suivi (see
+                   etude_detail_suivi), pass its id so the result is attached
+                   there and shows up in etude_resultats_recents for that
+                   suivi — otherwise it's saved as unattached quick work,
+                   findable via etude_resultats_recents and attachable later
+                   with etude_rattacher_resultat.
     Returns:
         {"status": "ok", "path": str}
         {"status": "error", "error": str}
     """
-    # ── Mode PDF path: generate HTML from file ────────────────────────────────
-    if pdf_path and not html:
+    # ── Mode PDF : extraire, puis rendre via le skill ──────────────────────────
+    if pdf_path and not html and not content:
         p = Path(pdf_path)
         if not p.exists():
             return {"status": "error", "error": f"Fichier introuvable : {pdf_path}"}
         try:
             from src.ui.attachments import _extract_pdf
-            content_text = _extract_pdf(p)
+            content = _extract_pdf(p)
         except Exception as e:
             return {"status": "error", "error": f"Erreur lecture PDF : {e}"}
 
+    # ── Mode contenu : le chemin conversationnel, MÊME pipeline que le PDF ─────
+    if content and not html:
         try:
-            from src.infra.settings import settings
-            from src.llm.models import make_orchestrator_llm_with_key
-            from src.llm.rotation import (
-                clients, marquer_echec, vaut_la_peine_de_reessayer,
-            )
-            from langchain_core.messages import HumanMessage
-
-            from src.llm.prompts import _LANG_INSTRUCTIONS
-            lang_instruction = _LANG_INSTRUCTIONS.get("fr", "")
-            if file_type == "exo":
-                from src.ui.templates import charger
-                prompt = charger("exo", content=content_text, lang=lang_instruction,
-                                 type_exo="Mélange de QCM (60%) et questions ouvertes (40%).")
-            else:
-                from src.ui.templates import charger
-                prompt = charger("fiche", content=content_text, lang=lang_instruction)
-
-            # Une clé épuisée ne doit pas coûter la commande : on parcourt les
-            # clés du backend, puis celles des fournisseurs de repli.
-            html, derniere = "", None
-            for fournisseur, cle, llm in clients(settings.llm_backend,
-                                                 make_orchestrator_llm_with_key):
-                try:
-                    reponse = llm.invoke([HumanMessage(content=prompt)])
-                    html = (reponse.content if isinstance(reponse.content, str)
-                            else str(reponse.content))
-                    break
-                except Exception as exc:   # noqa: BLE001 — clé suivante
-                    derniere = exc
-                    marquer_echec(fournisseur, cle, exc)
-                    if not vaut_la_peine_de_reessayer(exc):
-                        break
-            if not html:
-                raise RuntimeError(derniere or "aucun fournisseur n'a répondu")
+            html = _generer_via_skill(file_type, content)
         except Exception as e:
             return {"status": "error", "error": f"Erreur génération : {e}"}
 
-    # ── Save HTML to disk ─────────────────────────────────────────────────────
+    # ── Enregistrement ──────────────────────────────────────────────────────
     if not html or len(html) < 200:
-        return {"status": "error", "error": "HTML vide ou trop court."}
+        return {"status": "error", "error": "Contenu vide ou trop court."}
 
     final_html = _extract_html(html)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -117,6 +158,16 @@ def save_study_file(
         return {"status": "error", "error": str(e)}
 
     _open_browser(out)
+
+    try:
+        from .store import ajouter_ressource, ajouter_resultat
+        sources = [Path(pdf_path).name] if pdf_path else []
+        ressource_ids = [ajouter_ressource("document", nom, "copie", nom)["id"] for nom in sources]
+        ajouter_resultat(file_type if file_type in ("fiche", "exo") else "fiche", out.name,
+                          ressources_utilisees=ressource_ids, suivi_id=suivi_id or None)
+    except Exception:
+        pass  # le fichier est bien sauvé — un échec de suivi ne doit jamais faire échouer la génération
+
     return {
         "status": "ok",
         "path": str(out),

@@ -145,7 +145,7 @@ def test_le_paquet_skills_ne_depend_ni_des_agents_ni_de_lorchestrateur():
 
 # ── câblage réel ────────────────────────────────────────────────────────────────
 def test_load_skill_est_expose_par_lorchestrateur():
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
 
     outils = {t.name: t for t in build_all_tools()}
     assert "load_skill" in outils

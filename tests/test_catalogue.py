@@ -14,10 +14,10 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from src.orchestrator.catalogue import (
+from src.orchestrator.routage.catalogue import (
     OUVERTURES_MAX, connu, indexer, menu, obtenir_outil, outil, ouverts,
 )
-from src.orchestrator.registry import build_all_tools
+from src.orchestrator.routage.registry import build_all_tools
 from src.ui.plan_mode import BLOCKED_TOOLS
 
 
@@ -38,7 +38,7 @@ def test_tout_nom_du_catalogue_est_resolvable():
 
 def test_obtenir_outil_est_execute_par_le_graphe():
     """Sans ça, l'ouverture réussit côté modèle et échoue côté exécution."""
-    from src.orchestrator.graph import _chat_node_factory
+    from src.orchestrator.noeuds.chat import _chat_node_factory
 
     _, tools = _chat_node_factory()
     assert "obtenir_outil" in {t.name for t in tools}
@@ -157,7 +157,7 @@ def test_le_mode_plan_refuse_a_lexecution_pas_seulement_a_la_liaison(monkeypatch
     qui ne lui sont pas liés — vérifié sur gpt-oss:120b. Le mode plan ne peut
     donc plus reposer sur l'omission : il doit refuser au point d'exécution."""
     import src.ui.plan_mode as pm
-    from src.orchestrator.tool_node import _refus_mode_plan
+    from src.orchestrator.noeuds.outils import _refus_mode_plan
 
     ecriture = sorted(BLOCKED_TOOLS)[0]
     appels = [{"name": ecriture, "id": "1", "args": {}},

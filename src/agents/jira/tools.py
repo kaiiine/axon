@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Literal, Optional
 from requests.auth import HTTPBasicAuth
 import requests
@@ -226,6 +227,18 @@ _FIELDS = (
 
 # Noms possibles pour le type "sous-tâche" selon la langue du projet Jira
 _SUBTASK_ALIASES = ("Sous-tâche", "Sub-task", "Subtask", "subtask", "sous-tâche")
+
+# Familles de types et leurs synonymes. Jira renomme et traduit les types par
+# projet : un projet français n'a souvent ni « Story » ni « Task » mais
+# « Récit »/« Feature », « Tâche »… Le modèle raisonne sur une famille standard
+# (clé) ; on la traduit vers le nom RÉEL du projet au moment de créer.
+_TYPE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "Epic":    ("epic", "épopée", "epopee"),
+    "Story":   ("story", "user story", "récit", "recit", "feature", "fonctionnalité", "fonctionnalite"),
+    "Task":    ("task", "tâche", "tache"),
+    "Bug":     ("bug", "bogue", "anomalie", "défaut", "defaut"),
+    "Subtask": ("subtask", "sub-task", "sous-tâche", "sous-tache"),
+}
 
 
 @tool("jira_get_my_issues")
@@ -496,38 +509,131 @@ def _build_description_doc(text: str) -> dict:
     return {"type": "doc", "version": 1, "content": content or [{"type": "paragraph", "content": []}]}
 
 
+@lru_cache(maxsize=16)
+def _project_issue_types(project_key: str) -> tuple[dict, ...]:
+    """Les types de tickets RÉELLEMENT configurés dans le projet.
+
+    On lit les noms vrais (via `/project/{key}` → `issueTypes`) au lieu de parier
+    sur une liste figée : c'est ce qui manquait quand « Story » échouait sur un
+    projet dont le type s'appelle « Feature ».
+
+    Retour : un tuple de {"name", "subtask"} — tuple (donc hashable, cachable).
+    Vide si l'appel échoue : la découverte ne doit jamais bloquer une création.
+    """
+    try:
+        data = _get(f"project/{project_key}")
+    except Exception:
+        return ()
+    types = data.get("issueTypes") or []
+    return tuple(
+        {"name": t.get("name", ""), "subtask": bool(t.get("subtask"))}
+        for t in types
+        if t.get("name")
+    )
+
+
+def _match_requested_type(requested: str, real_names: tuple[str, ...]) -> str | None:
+    """Le nom RÉEL qui correspond au type demandé, ou None.
+
+    Deux passes, de la plus sûre à la plus permissive :
+      1. nom identique (insensible à la casse) ;
+      2. même famille via les synonymes (Story ↔ Feature, Task ↔ Tâche…).
+    None si aucune : l'appelant choisira un repli.
+    """
+    wanted = requested.strip().lower()
+
+    for nom in real_names:
+        if nom.lower() == wanted:
+            return nom
+
+    famille = {wanted, *_TYPE_SYNONYMS.get(requested, ())}
+    for nom in real_names:
+        if nom.lower() in famille:
+            return nom
+
+    return None
+
+
+def _resolve_issue_type(project_key: str, requested: str, subtask: bool = False) -> str:
+    """Traduit le type demandé en un nom que le projet accepte vraiment.
+
+    Si la découverte échoue ou qu'aucun type ne colle, on rend le type demandé
+    tel quel : le comportement d'avant, jamais plus mauvais.
+    """
+    real_types = _project_issue_types(project_key)
+    if not real_types:
+        return requested
+
+    # On ne compare qu'aux types de la BONNE catégorie : une sous-tâche ne doit
+    # pas se résoudre en « Task », ni l'inverse.
+    candidats = [t for t in real_types if t["subtask"] == subtask]
+    if not candidats:
+        candidats = list(real_types)
+
+    noms = tuple(t["name"] for t in candidats)
+    trouve = _match_requested_type(requested, noms)
+    if trouve:
+        return trouve
+
+    # Repli : le premier type de la bonne catégorie, pour qu'une création
+    # n'échoue jamais juste parce que le nom exact est introuvable.
+    return noms[0] if noms else requested
+
+
+def _create_subtask(
+    project_key: str, item: dict, fields: dict, resolved_type: str, epic_key: str | None
+) -> dict:
+    """Crée une sous-tâche. `fields` est déjà prérempli par `_create_single`.
+
+    Deux spécificités : le champ `parent` est obligatoire, et le nom du type
+    varie selon la langue du projet. On tente d'abord le nom résolu (découvert
+    dans le projet), puis les alias connus, jusqu'à ce qu'un nom passe.
+    """
+    parent_key = item.get("parent_key") or epic_key
+    if not parent_key:
+        raise ValueError("Une sous-tâche nécessite un 'parent_key' (ex: 'KAN-42')")
+    fields["parent"] = {"key": parent_key}
+
+    candidats = [resolved_type, *(a for a in _SUBTASK_ALIASES if a != resolved_type)]
+    derniere_erreur: Exception | None = None
+    for type_name in candidats:
+        fields["issuetype"] = {"name": type_name}
+        try:
+            return _post("issue", {"fields": fields})
+        except RuntimeError as e:
+            derniere_erreur = e
+            continue
+
+    raise RuntimeError(
+        f"Impossible de créer la sous-tâche : aucun type sous-tâche accepté par "
+        f"le projet {project_key} (essayés : {', '.join(candidats)})."
+    ) from derniere_erreur
+
+
 def _create_single(project_key: str, item: dict, epic_key: str | None = None) -> dict:
     """Crée un seul ticket et retourne son résultat brut."""
-    issue_type = item.get("issue_type", "Story")
+    requested = item.get("issue_type", "Story")
+    is_subtask = requested in _SUBTASK_ALIASES or requested.strip().lower() == "subtask"
+
+    # Traduit le type demandé vers un nom que CE projet accepte (Story→Feature,
+    # Task→Tâche…), au lieu d'envoyer un nom figé qui peut ne pas exister.
+    issue_type = _resolve_issue_type(project_key, requested, subtask=is_subtask)
+
     fields: dict = {
         "project": {"key": project_key},
         "summary": item["summary"],
         "issuetype": {"name": issue_type},
     }
-
     if item.get("description"):
         fields["description"] = _build_description_doc(item["description"])
-
     if item.get("priority"):
         fields["priority"] = {"name": item["priority"]}
 
-    # Les sous-tâches nécessitent un champ "parent" obligatoire
-    if issue_type in _SUBTASK_ALIASES:
-        parent_key = item.get("parent_key") or epic_key
-        if not parent_key:
-            raise ValueError("Une sous-tâche nécessite un 'parent_key' (ex: 'KAN-42')")
-        fields["parent"] = {"key": parent_key}
-        # Essaie les noms possibles selon la langue du projet Jira
-        for type_name in ("Sous-tâche", "Sub-task", "Subtask"):
-            fields["issuetype"] = {"name": type_name}
-            try:
-                return _post("issue", {"fields": fields})
-            except RuntimeError:
-                continue
-        raise RuntimeError("Impossible de créer la sous-tâche : aucun type 'Sous-tâche'/'Sub-task'/'Subtask' trouvé dans ce projet.")
-    elif epic_key:
-        fields["customfield_10014"] = epic_key
+    if is_subtask:
+        return _create_subtask(project_key, item, fields, issue_type, epic_key)
 
+    if epic_key:
+        fields["customfield_10014"] = epic_key
     return _post("issue", {"fields": fields})
 
 
@@ -542,7 +648,11 @@ class Issue(BaseModel):
 
     summary: str = Field(description="Titre du ticket.")
     issue_type: Literal["Epic", "Story", "Task", "Bug", "Subtask"] = Field(
-        default="Story", description="Type du ticket.")
+        default="Story",
+        description="Famille du ticket. Donne toujours l'un de ces 5 noms "
+                    "standard : il est traduit automatiquement vers le type réel "
+                    "du projet (ex. Story→« Feature »/« Récit », Task→« Tâche ») "
+                    "— tu n'as pas à connaître le nommage exact du projet.")
     description: str = Field(default="", description="Description complète.")
     priority: Optional[Literal["Highest", "High", "Medium", "Low", "Lowest"]] = Field(
         default=None, description="Priorité, si elle est connue.")
@@ -670,6 +780,34 @@ def jira_list_projects() -> dict:
         return {"status": "ok", "count": len(projects), "projects": projects}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+@tool("jira_list_issue_types")
+def jira_list_issue_types(project_key: str) -> dict:
+    """
+    Liste les types de tickets RÉELLEMENT disponibles dans un projet Jira.
+
+    Utilise ce tool quand :
+    - une création a échoué sur un type invalide ("issuetype not valid")
+    - tu veux connaître les noms exacts avant de créer (ils varient par projet :
+      "Story" vs "Récit" vs "Feature", "Task" vs "Tâche"…)
+
+    Mots-clés : types de tickets, issuetype, types disponibles, Story Task Bug Epic
+
+    Args:
+        project_key: clé du projet (ex: "KAN")
+    Returns:
+        {"status": "ok", "standard": [...], "subtasks": [...]}
+        — `standard` : types de tickets normaux ; `subtasks` : types de sous-tâche.
+    """
+    types = _project_issue_types(project_key)
+    if not types:
+        return {"status": "error",
+                "error": f"Aucun type lisible pour le projet {project_key} "
+                         f"(projet inexistant ou accès refusé)."}
+    standard = [t["name"] for t in types if not t["subtask"]]
+    subtasks = [t["name"] for t in types if t["subtask"]]
+    return {"status": "ok", "standard": standard, "subtasks": subtasks}
 
 
 @tool("jira_add_comment")
@@ -839,6 +977,42 @@ def jira_assign_issue(key: str, user_name: Optional[str] = None) -> dict:
         return {"status": "error", "error": str(e)}
 
 
+def _project_of(issue_key: str) -> str:
+    """Clé de projet déduite d'une clé de ticket : « KAN-8 » → « KAN »."""
+    return issue_key.split("-", 1)[0]
+
+
+def _update_single(
+    key: str,
+    summary: str | None = None,
+    description: str | None = None,
+    priority: str | None = None,
+    issue_type: str | None = None,
+) -> list[str]:
+    """Applique les champs non vides à un ticket. Retourne les champs modifiés.
+
+    Lève ValueError si rien n'est fourni, RuntimeError si l'API refuse. Le type
+    passe par la MÊME résolution que la création (Story→« Feature » selon le
+    projet), sinon changer le type échouerait là où le créer réussit.
+    """
+    fields: dict = {}
+    if summary:
+        fields["summary"] = summary
+    if description:
+        fields["description"] = _build_description_doc(description)
+    if priority:
+        fields["priority"] = {"name": priority}
+    if issue_type:
+        resolu = _resolve_issue_type(_project_of(key), issue_type)
+        fields["issuetype"] = {"name": resolu}
+
+    if not fields:
+        raise ValueError("Aucun champ à mettre à jour fourni.")
+
+    _put(f"issue/{key}", {"fields": fields})
+    return list(fields.keys())
+
+
 @tool("jira_update_issue")
 def jira_update_issue(
     key: str,
@@ -862,30 +1036,119 @@ def jira_update_issue(
         summary: nouveau titre (optionnel)
         description: nouvelle description (optionnel)
         priority: nouvelle priorité ("Highest", "High", "Medium", "Low", "Lowest") (optionnel)
-        issue_type: nouveau type ("Task", "Bug", "Story") (optionnel)
+        issue_type: nouvelle famille ("Task", "Bug", "Story"…) — traduite
+            automatiquement vers le type réel du projet (ex. Story→« Feature »)
     Returns:
         {"status": "ok", "key": "..."}
     """
     try:
-        fields: dict = {}
-        if summary:
-            fields["summary"] = summary
-        if description:
-            fields["description"] = {
-                "type": "doc", "version": 1,
-                "content": [{"type": "paragraph", "content": [{"type": "text", "text": description}]}],
-            }
-        if priority:
-            fields["priority"] = {"name": priority}
-        if issue_type:
-            fields["issuetype"] = {"name": issue_type}
-        if not fields:
-            return {"status": "error", "error": "Aucun champ à mettre à jour fourni"}
-
-        _put(f"issue/{key}", {"fields": fields})
-        return {"status": "ok", "key": key, "updated_fields": list(fields.keys())}
+        updated = _update_single(key, summary, description, priority, issue_type)
+        return {"status": "ok", "key": key, "updated_fields": updated}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+class IssueUpdate(BaseModel):
+    """Une modification à appliquer à UN ticket existant.
+
+    Tout est optionnel sauf `key` : on ne touche qu'aux champs fournis. Fournir
+    `epic_key` seul range le ticket sous un Epic sans rien changer d'autre.
+    """
+
+    key: str = Field(description="Clé du ticket à modifier (ex. « KAN-8 »).")
+    summary: Optional[str] = Field(default=None, description="Nouveau titre.")
+    description: Optional[str] = Field(default=None, description="Nouvelle description.")
+    priority: Optional[Literal["Highest", "High", "Medium", "Low", "Lowest"]] = Field(
+        default=None, description="Nouvelle priorité.")
+    issue_type: Optional[Literal["Epic", "Story", "Task", "Bug", "Subtask"]] = Field(
+        default=None, description="Nouvelle famille — traduite automatiquement "
+                                  "vers le type réel du projet.")
+    epic_key: Optional[str] = Field(
+        default=None, description="Clé de l'Epic sous lequel ranger le ticket "
+                                  "(ex. « KAN-30 »), pour regrouper.")
+
+
+class ArgsUpdateBulk(BaseModel):
+    updates: list[IssueUpdate] = Field(
+        description="Les modifications à appliquer, une par ticket.")
+
+
+@tool("jira_update_issues_bulk", args_schema=ArgsUpdateBulk)
+def jira_update_issues_bulk(updates: list[IssueUpdate]) -> dict:
+    """
+    Modifie plusieurs tickets Jira en UN SEUL appel : titre, description,
+    priorité, type, et/ou rattachement à un Epic.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - renommer ou réécrire plusieurs tickets d'un coup
+    - ajouter ou refaire les descriptions de plusieurs tickets
+    - ranger plusieurs tickets sous des Epics (regrouper le backlog)
+    - toute modification portant sur PLUSIEURS tickets à la fois
+
+    Préfère-le à des appels répétés de jira_update_issue : un seul appel traite
+    toute la liste, là où N appels séparés butent sur la limite de tours.
+
+    Mots-clés : modifier plusieurs tickets, renommer en masse, regrouper sous epic,
+    réécrire le backlog, ranger les tickets, descriptions en masse
+
+    Args:
+        updates: la liste des modifications — chaque champ est décrit dans le schéma.
+    Returns:
+        {"status": "ok"|"partial", "updated_count": N, "updated": [...], "errors": [...]}
+    """
+    updated = []
+    errors = []
+    items = [u.model_dump() if isinstance(u, IssueUpdate) else dict(u) for u in updates]
+    base, _ = _auth()
+
+    for item in items:
+        key = (item.get("key") or "").strip()
+        if not key:
+            continue
+        try:
+            champs = _apply_one_update(item)
+            if not champs:
+                errors.append({"key": key, "error": "aucune modification fournie"})
+                continue
+            updated.append({
+                "key": key,
+                "updated_fields": champs,
+                "url": f"{base}/browse/{key}",
+            })
+        except Exception as e:
+            errors.append({"key": key, "error": str(e)})
+
+    return {
+        "status": "ok" if not errors else "partial",
+        "updated_count": len(updated),
+        "updated": updated,
+        "errors": errors,
+    }
+
+
+def _apply_one_update(item: dict) -> list[str]:
+    """Applique les champs ET le rattachement epic d'un item. Champs modifiés.
+
+    Séparé du corps du bulk pour que la boucle reste lisible : ici on combine la
+    mise à jour des champs (si fournis) et le lien vers l'epic (si fourni), un
+    ticket pouvant demander l'un, l'autre, ou les deux.
+    """
+    key = item["key"].strip()
+    a_des_champs = any(item.get(f) for f in ("summary", "description", "priority", "issue_type"))
+
+    champs: list[str] = []
+    if a_des_champs:
+        champs = _update_single(
+            key,
+            summary=item.get("summary"),
+            description=item.get("description"),
+            priority=item.get("priority"),
+            issue_type=item.get("issue_type"),
+        )
+    if item.get("epic_key"):
+        _link_to_epic_single(key, item["epic_key"])
+        champs.append("epic")
+    return champs
 
 
 @tool("jira_get_issue_comments")
@@ -998,6 +1261,21 @@ def jira_delete_issue(key: str) -> dict:
         return {"status": "error", "error": str(e)}
 
 
+def _link_to_epic_single(issue_key: str, epic_key: str) -> None:
+    """Rattache un ticket à un epic. Lève si les deux voies échouent.
+
+    Jira expose le lien d'epic de deux façons selon la génération du projet : le
+    champ « Epic Link » (customfield_10014) ou le `parent`. On tente l'un, puis
+    l'autre.
+    """
+    try:
+        _put(f"issue/{issue_key}", {"fields": {"customfield_10014": epic_key}})
+        return
+    except Exception:
+        pass
+    _put(f"issue/{issue_key}", {"fields": {"parent": {"key": epic_key}}})
+
+
 @tool("jira_link_to_epic")
 def jira_link_to_epic(issue_key: str, epic_key: str) -> dict:
     """
@@ -1017,12 +1295,7 @@ def jira_link_to_epic(issue_key: str, epic_key: str) -> dict:
         {"status": "ok", "issue": "KAN-25", "epic": "KAN-10"}
     """
     try:
-        try:
-            _put(f"issue/{issue_key}", {"fields": {"customfield_10014": epic_key}})
-            return {"status": "ok", "issue": issue_key, "epic": epic_key}
-        except Exception:
-            pass
-        _put(f"issue/{issue_key}", {"fields": {"parent": {"key": epic_key}}})
+        _link_to_epic_single(issue_key, epic_key)
         return {"status": "ok", "issue": issue_key, "epic": epic_key}
     except Exception as e:
         return {"status": "error", "error": str(e)}

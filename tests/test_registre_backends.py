@@ -29,7 +29,11 @@ RACINE = Path(__file__).resolve().parent.parent
 
 #: Les fichiers qui portaient une copie de la table.
 _ANCIENS_SITES = (
-    "src/orchestrator/graph.py", "src/ui/commands.py", "src/agents/deep/tools.py",
+    # Le nœud `chatbot` a quitté `graph.py` pour `noeuds/chat.py` avec la
+    # fabrique de backends : surveiller `graph.py` laisserait passer une table
+    # réintroduite là où elle vivait vraiment.
+    "src/orchestrator/noeuds/chat.py", "src/ui/commands.py",
+    "src/agents/deep/tools.py",
     "src/ui/spec.py", "src/agents/memory/persistent.py", "src/cron_daemon.py",
 )
 

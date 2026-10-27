@@ -22,14 +22,14 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from src.agents.shell import autorisation
-from src.orchestrator.confirmation import (
+from src.orchestrator.noeuds.confirmation import (
     NON,
     OUI,
     apres_confirmation,
     commande_a_confirmer,
     confirmer,
 )
-from src.orchestrator.hitl import AUTORISATION, demande_en_attente, reponse
+from src.orchestrator.commun.hitl import AUTORISATION, demande_en_attente, reponse
 
 
 @pytest.fixture(autouse=True)

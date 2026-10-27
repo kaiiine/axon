@@ -8,7 +8,6 @@ import sys
 import os
 import re
 import time
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -24,15 +23,14 @@ from src.llm.models import make_llm_gemini, make_llm_mistral, make_llm_ollama_cl
 
 from src.llm.prompts.cron import SYSTEME as _SYSTEM
 
-PID_FILE = Path.home() / ".axon" / "cron.pid"
+from src.infra import chemins as _chemins
+from src.infra.notifications import notifier
+from src.infra.processus import pid_vivant
+from src.agents.study.rappels import contexte_echeance, echeance_du_rappel, recap_du_jour, texte_rappel_manque
+
+PID_FILE = _chemins.pid_cron()
 RELOAD_INTERVAL = 10 # sec
 
-
-def _notify_desktop(title: str, message: str) -> None:
-    try:
-        subprocess.run(["notify-send", "-u", "normal", title, message], timeout=5)
-    except Exception:
-        pass
 
 def _notify_slack(message: str) -> None:
     try:
@@ -45,9 +43,16 @@ def _notify_slack(message: str) -> None:
     
 
 
-def _send_notification(channels: list[str], description: str, message: str) -> None:
+def _contexte_de_tache(task_id: str) -> dict:
+    """Le genre d'une tâche, pour que l'île propose les bonnes actions."""
+    rappel_etude = _echeance_du_rappel(task_id)
+    return contexte_echeance(*rappel_etude) if rappel_etude else {"genre": "tache"}
+
+
+def _send_notification(channels: list[str], description: str, message: str,
+                       contexte: dict | None = None) -> None:
     if "desktop" in channels:
-        _notify_desktop(f"Axon · {description}", message)
+        notifier(f"Axon · {description}", message, contexte)
     if "slack" in channels:
         _notify_slack(f"*{description}*\n{message}")
 
@@ -201,7 +206,8 @@ def _run_task(task_id: str, *, essai: bool = False) -> dict | None:
                 log_entry["aurait_notifie"] = {
                     "canaux": task["notify_channels"], "message": message}
             else:
-                _send_notification(task["notify_channels"], task["description"], message)
+                _send_notification(task["notify_channels"], task["description"], message,
+                                   _contexte_de_tache(task["id"]))
                 log_entry["notified"] = True
             log_entry["message"] = message
 
@@ -224,7 +230,7 @@ def _run_task(task_id: str, *, essai: bool = False) -> dict | None:
 
         if stop and not essai:
             deactivate_task(task["id"])
-            _notify_desktop(f"Axon · {task['description']}", "Tâche terminée (condition remplie).")
+            notifier(f"Axon · {task['description']}", "Tâche terminée (condition remplie).")
 
     except Exception as e:
         log_entry["status"] = "error"
@@ -244,6 +250,38 @@ def _run_task(task_id: str, *, essai: bool = False) -> dict | None:
 scheduler = BackgroundScheduler()
 _known_ids: set[str] = set()
 
+GRACE_RAPPEL_ETUDE = 12 * 3600  # sec
+HEURE_RECAP_ETUDES = 6
+
+
+def _echeance_du_rappel(task_id: str):
+    """(suivi, échéance) si la tâche est un rappel d'échéance — jamais une
+    exception : un store d'études illisible ne doit pas arrêter le daemon."""
+    try:
+        return echeance_du_rappel(task_id)
+    except Exception:
+        return None
+
+
+def _recap_etudes_si_nouveau_jour() -> None:
+    """Un récapitulatif d'études par jour, au premier passage après 6 h —
+    au démarrage de la session comme au réveil d'une mise en veille. La date
+    d'envoi est gardée sur disque : un redémarrage du daemon ne le renvoie pas."""
+    maintenant = datetime.now()
+    aujourdhui = maintenant.date().isoformat()
+    fichier = _chemins.dernier_recap_etudes()
+    try:
+        if maintenant.hour < HEURE_RECAP_ETUDES or (fichier.exists() and fichier.read_text().strip() == aujourdhui):
+            return
+        recap = recap_du_jour()
+        fichier.parent.mkdir(parents=True, exist_ok=True)
+        fichier.write_text(aujourdhui)
+        if recap is not None:
+            notifier(*recap, {"genre": "recapitulatif"})
+    except Exception as e:
+        print(f"axon-cron: récapitulatif d'études impossible : {e}", flush=True)
+
+
 def _reload_tasks() -> None:
     tasks = get_tasks(active_only=True)
     currentIds = {t["id"] for t in tasks}
@@ -256,14 +294,22 @@ def _reload_tasks() -> None:
                 pass
             _known_ids.discard(job_id)
     
-    now = datetime.now()
+    # Comparaison toujours entre dates « aware » : les rappels d'études sont
+    # écrits avec leur fuseau (Europe/Paris, +01:00/+02:00), `schedule_task`
+    # en heure locale naïve. Comparer les deux lève un TypeError qui, non
+    # rattrapé ici, faisait tomber tout le daemon — et toutes ses tâches.
+    now = datetime.now().astimezone()
+    echeances_deja_signalees: set[str] = set()
     for task in tasks:
         if task["id"] in _known_ids:
             continue
+        rappel_etude = _echeance_du_rappel(task["id"])
 
         run_at = task.get("run_at")
         if run_at:
             dt = datetime.fromisoformat(run_at)
+            if dt.tzinfo is None:
+                dt = dt.astimezone()
             if dt < now:
                 deactivate_task(task["id"])
                 append_log(task["id"], {
@@ -275,7 +321,13 @@ def _reload_tasks() -> None:
                     "result_summary": "",
                     "duration_ms":0,
                 })
-                _notify_desktop(f"Axon · {task['description']}", "Tâche one-shot manquée (daemon inactif). Recréer si besoin.")
+                if rappel_etude is None:
+                    notifier(f"Axon · {task['description']}", "Tâche one-shot manquée (daemon inactif). Recréer si besoin.")
+                elif rappel_etude[1]["id"] not in echeances_deja_signalees:
+                    # Plusieurs rappels manqués pour la même échéance (J-7 et
+                    # J-3 pendant un long arrêt) : une seule notification.
+                    echeances_deja_signalees.add(rappel_etude[1]["id"])
+                    notifier(*texte_rappel_manque(*rappel_etude), contexte_echeance(*rappel_etude))
                 continue
             trigger = DateTrigger(run_date=dt)
         else:
@@ -287,7 +339,10 @@ def _reload_tasks() -> None:
             id=task["id"],
             args=[task["id"]],
             max_instances=1,
-            misfire_grace_time=30,
+            # Un rappel d'études manqué pendant une mise en veille part encore
+            # au réveil (dans les 12 h) au lieu d'être sauté en silence ; les
+            # autres tâches gardent leur tolérance courte.
+            misfire_grace_time=GRACE_RAPPEL_ETUDE if rappel_etude else 30,
         )
         _known_ids.add(task["id"])
 
@@ -299,6 +354,11 @@ def _shutdown(signum, frame):
     sys.exit(0)
 
 if __name__ == "__main__":
+    pid_existant = pid_vivant(PID_FILE)
+    if pid_existant is not None:
+        print(f"axon-cron: déjà lancé (PID {pid_existant}) — arrêt.", flush=True)
+        sys.exit(1)
+
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(os.getpid()))
 
@@ -307,11 +367,13 @@ if __name__ == "__main__":
 
     scheduler.start()
     _reload_tasks()
+    _recap_etudes_si_nouveau_jour()
 
     print(f"axon-cron démarré (PID {os.getpid()})")
 
     while True:
         time.sleep(RELOAD_INTERVAL)
         _reload_tasks()
+        _recap_etudes_si_nouveau_jour()
     
     

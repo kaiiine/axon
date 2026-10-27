@@ -284,6 +284,24 @@ def local_read_file(path: str, offset: int = 0, limit: int = 0) -> Dict[str, Any
         except Exception as e:
             return {"status": "error", "error": f"Erreur lecture PDF: {e}"}
 
+    # ── PowerPoint / Excel ───────────────────────────────────────────────────
+    # Sans ce cas, un .pptx tombait dans la branche générique plus bas : un ZIP
+    # binaire lu comme UTF-8, `errors="replace"` en fait un mur de « � ». Vécu :
+    # 23 Mo lus deux fois en pure perte, puis le modèle a improvisé `unzip -l`
+    # en shell — bloqué par la confirmation, pour un fichier qu'il ne pouvait
+    # de toute façon pas lire autrement. Même extracteur qu'à l'attache directe
+    # (`ui/attachments.py`) : un seul endroit qui sait lire chaque format.
+    from src.ui.attachments import EXTRACTEURS_OFFICE
+
+    if ext in EXTRACTEURS_OFFICE:
+        content = EXTRACTEURS_OFFICE[ext](p)
+        if content.startswith("[Erreur"):
+            return {"status": "error", "error": content}
+        return {
+            "status": "ok", "name": p.name, "path": str(p),
+            "content": content, "size": f"{size // 1024}KB",
+        }
+
     # ── Fichier texte avec plage de lignes ────────────────────────────────────
     if limit > 0 or offset > 0:
         # Lecture efficace ligne par ligne — pas de chargement complet en mémoire

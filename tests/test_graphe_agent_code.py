@@ -24,7 +24,7 @@ from src.agents.coding.graphe_agent import (
     MARQUEUR_DELEGATION, construire, consignes_en_attente, rediriger,
 )
 from src.agents.coding.pending import dev_plan
-from src.orchestrator.plan import EXECUTER
+from src.orchestrator.noeuds.plan import EXECUTER
 
 
 @lc_tool("lire")
@@ -374,7 +374,7 @@ def test_un_accord_est_bien_lu_comme_un_accord():
     """`hitl.accorde` n'accepte le libellé affiché que si on lui passe la
     Question. Sans elle, « Oui, exécuter » valait REFUS — l'agent obtenait la
     permission et annonçait quand même un refus à l'utilisateur."""
-    from src.orchestrator import hitl
+    from src.orchestrator.commun import hitl
 
     question = hitl.Question(texte="?", choix=("Non, annuler", "Oui, exécuter"),
                              affirmatif="Oui, exécuter")
@@ -394,7 +394,7 @@ def test_les_libelles_du_plan_sont_ceux_que_le_client_rend():
     """
     import inspect
 
-    from src.orchestrator.plan import ABANDONNER, EXECUTER, PRECISER
+    from src.orchestrator.noeuds.plan import ABANDONNER, EXECUTER, PRECISER
     from src.ui.review import _servir_plan
 
     rendu = inspect.getsource(_servir_plan)
@@ -485,4 +485,4 @@ def test_la_revue_a_lieu_dans_le_sous_graphe():
 
     source = inspect.getsource(graphe_agent.construire)
     assert "reviser_les_fichiers" in source
-    assert "from src.orchestrator.revision import reviser" in source
+    assert "from src.orchestrator.noeuds.revision import reviser" in source

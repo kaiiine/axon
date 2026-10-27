@@ -32,8 +32,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.registry import build_all_tools
-from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever
+from src.orchestrator.routage.registry import build_all_tools
+from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever
 
 #: Rattrapées par le correctif. Chacune échouait avant.
 CORRIGEES = [

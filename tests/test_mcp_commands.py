@@ -527,6 +527,6 @@ def test_le_prompt_mcp_est_injecte_des_quun_tool_mcp_est_selectionne():
 def test_aucun_tool_natif_ne_declenche_la_section_mcp():
     """Le déclencheur repose sur le double underscore : si un tool natif en
     prenait un, la section s'injecterait à tort."""
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
 
     assert [t.name for t in build_all_tools() if "__" in t.name] == []

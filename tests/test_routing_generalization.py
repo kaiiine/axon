@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.registry import build_all_tools
-from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever
+from src.orchestrator.routage.registry import build_all_tools
+from src.orchestrator.routage.tool_retriever import TOOL_GROUPS, ToolRetriever
 
 
 @pytest.fixture(scope="module")
 def retriever(tmp_path_factory):
     """Index ISOLÉ : écrire dans ~/.axon/tool_store ferait dépendre le démarrage
     de l'utilisateur du dernier test lancé."""
-    from src.orchestrator import tool_retriever as module
+    from src.orchestrator.routage import tool_retriever as module
 
     store = tmp_path_factory.mktemp("tool_store") / "store"
     module._CACHE_DIR, module._CACHE_HASH = store, store / "fingerprint.txt"
@@ -120,7 +120,7 @@ def test_le_seuil_de_rang_est_declare_pas_code_en_dur(retriever):
 
     import inspect
 
-    from src.orchestrator import tool_retriever
+    from src.orchestrator.routage import tool_retriever
 
     selection = inspect.getsource(tool_retriever.ToolRetriever.get)
     assert 'group == "coding"' not in selection
@@ -171,7 +171,7 @@ def test_la_porte_money_ne_se_declenche_sur_aucune_requete_hors_sujet(requete):
     pendant le trajet », `quant` remonte au rang 2 par pure similarité — un
     comportement du corpus, antérieur à cette wave et indépendant d'elle. Ce qui
     doit rester vrai, c'est que la porte déterministe, elle, ne s'ouvre pas."""
-    from src.orchestrator.tool_retriever import _money_intent
+    from src.orchestrator.routage.tool_retriever import _money_intent
 
     assert not _money_intent(requete)
 

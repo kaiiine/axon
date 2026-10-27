@@ -1,15 +1,21 @@
-"""Les clients servent le MÊME protocole — c'est tout l'intérêt de l'exercice.
+"""La demande du graphe se LIT au même endroit, quel que soit ce qui l'affiche.
 
-Le HITL vivait dans `src/ui/streaming.py`, en six mécanismes. Conséquence
-mesurée : `src/api/streaming.py` n'en connaissait aucun, et une question posée
-via l'API ne trouvait personne. Ce que ces tests gardent, ce n'est pas le rendu
-— c'est le fait que la LECTURE de la demande soit commune.
+Le HITL vivait dans `src/ui/streaming.py`, en six mécanismes éparpillés. Le
+défaut mesuré à l'époque : un second transport (l'endpoint compatible OpenAI)
+n'en connaissait aucun, et une question posée par le graphe n'y trouvait
+personne pour y répondre.
+
+Ce transport-là a été supprimé depuis — il ne servait pas. Ce que ces tests
+gardent reste vrai et utile : la lecture de la demande est une fonction à part,
+pas du rendu. C'est ce qui rend un second transport possible le jour où il en
+faut un, et c'est ce qui empêche le terminal de redevenir le seul endroit qui
+sache ce que le graphe attend.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.orchestrator.hitl import Demande, Question
+from src.orchestrator.commun.hitl import Demande, Question
 
 
 def _instantane(valeur):
@@ -60,7 +66,7 @@ def test_une_panne_d_affichage_ne_vaut_pas_accord(monkeypatch):
     des réponses VIDES — lues comme un refus. Rendre une valeur par défaut, ou
     laisser l'exception filer et reprendre plus tard, produirait un accord que
     personne n'a donné."""
-    from src.orchestrator.hitl import accorde
+    from src.orchestrator.commun.hitl import accorde
     from src.ui import review
 
     monkeypatch.setattr(review, "ask_user_questions",
@@ -100,49 +106,7 @@ def test_une_reponse_absente_devient_du_vide(monkeypatch):
     assert reponses == ["", ""]
 
 
-# ── Le client API ────────────────────────────────────────────────────────────
-def test_l_API_lit_la_meme_demande_que_le_TUI():
-    """Le motif entier du chantier. `src/api/streaming.py` ne connaissait AUCUN
-    des six mécanismes de HITL : une question posée par le graphe n'y trouvait
-    personne, et la commande qu'elle gardait n'était jamais autorisée."""
-    from src.api.streaming import _demande_en_attente
-    from src.ui.streaming import _demande_du_graphe
-
-    demande = Demande(genre="autorisation", cle="rm -rf /tmp/x",
-                      questions=(Question("Exécuter ?", ("Non", "Oui"), affirmatif="Oui"),))
-    graphe = _Graphe(_instantane(demande.en_clair()))
-
-    assert _demande_en_attente(graphe, {}) == _demande_du_graphe(graphe, {}) == demande
-
-
-def test_l_API_rend_la_demande_en_texte_avec_ses_choix():
-    """Une API de chat n'a pas de canal interactif : la question devient un TOUR.
-    Elle doit donc dire ce qu'on attend, sinon le client répond à côté."""
-    from src.api.streaming import _rendre_demande
-
-    texte = _rendre_demande(Demande(
-        genre="autorisation", cle="rm -rf /tmp/x",
-        apercu="Fichier : /tmp/x",
-        questions=(Question("Commande DESTRUCTIVE :\n\nrm -rf /tmp/x",
-                            ("Non, annuler", "Oui, exécuter"),
-                            affirmatif="Oui, exécuter"),)))
-
-    assert "Fichier : /tmp/x" in texte, "l'aperçu doit être montré"
-    assert "rm -rf /tmp/x" in texte
-    assert "Non, annuler" in texte and "Oui, exécuter" in texte, (
-        "sans les choix, le client ne peut pas répondre par le bon libellé")
-
-
-def test_un_fil_en_attente_traite_le_message_comme_une_REPONSE():
-    """Le piège de ce transport. Un fil qui attend ne recommence pas un tour :
-    réinjecter le message comme une nouvelle question relancerait le graphe
-    depuis le début, et la demande resterait en attente pour toujours."""
-    import inspect
-
-    from src.api import streaming
-
-    source = inspect.getsource(streaming.stream_orchestrator)
-    position_test = source.index("_demande_en_attente(orchestrator, config) is not None")
-    position_etat = source.index('state = {"messages"')
-    assert position_test < position_etat, (
-        "l'état neuf est construit avant d'avoir vérifié qu'on n'attend pas une réponse")
+# Les trois tests du client API ont été retirés avec `src/api/` : l'endpoint
+# compatible OpenAI (brancher Axon dans Zed, Cursor, Continue.dev) ne servait
+# pas. Ce qu'ils gardaient — que la LECTURE de la demande soit commune à tous
+# les transports — n'a plus qu'un seul transport à garder : le terminal.

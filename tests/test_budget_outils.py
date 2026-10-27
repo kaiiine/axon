@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.registry import build_all_tools
-from src.orchestrator.tool_retriever import (
+from src.orchestrator.routage.registry import build_all_tools
+from src.orchestrator.routage.tool_retriever import (
     _BUDGET_OUTILS, _PINNED_TOOLS, TOOL_GROUPS, ToolRetriever,
 )
 
@@ -115,7 +115,7 @@ def test_un_mot_souple_ne_pose_pas_le_rang_1(retriever):
     2 faux sur les requêtes réelles — « si le prix change de plus de 1 % » est une
     surveillance —, mais « quel est le prix du Lenovo » a besoin de la recherche
     web. Un indice rend joignable, il ne décide pas."""
-    from src.orchestrator.tool_retriever import _RANG_INDICE
+    from src.orchestrator.routage.tool_retriever import _RANG_INDICE
 
     _, rangs = retriever._rank_groups_detaille(
         "Surveille le cours du Bitcoin et préviens-moi si le prix change de 1%")
@@ -136,7 +136,7 @@ def test_aucun_mot_nest_a_la_fois_dur_et_souple():
 def test_un_indice_nouvre_pas_un_groupe_a_seuil_strict():
     """Le rang d'un indice est délibérément sous les seuils : on n'entre pas dans
     le groupe le plus lourd du registre sur un mot qui a tort deux fois sur trois."""
-    from src.orchestrator.tool_retriever import _RANG_INDICE
+    from src.orchestrator.routage.tool_retriever import _RANG_INDICE
 
     quant = TOOL_GROUPS["quant"]
     assert quant.soft_keywords

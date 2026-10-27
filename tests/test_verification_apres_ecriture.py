@@ -13,9 +13,9 @@ from __future__ import annotations
 import pytest
 
 from src.agents.coding.pending import FileChange, pending_changes
-from src.orchestrator import revision
-from src.orchestrator.plan import EXECUTER  # noqa: F401 — garde l'import stable
-from src.orchestrator.verification import consigne, verifier
+from src.orchestrator.noeuds import revision
+from src.orchestrator.noeuds.plan import EXECUTER  # noqa: F401 — garde l'import stable
+from src.orchestrator.commun.verification import consigne, verifier
 
 
 @pytest.fixture(autouse=True)

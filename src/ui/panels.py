@@ -99,6 +99,8 @@ def plan_panel(steps_text: str) -> Panel:
     for i, line in enumerate(lines):
         clean = re.sub(r"^[-*•]\s*", "", line).strip()
         clean = re.sub(r"^\d+\.\s*", "", clean).strip()
+        clean = re.sub(r"^\[[ xX]?\]\s*", "", clean).strip()
+        clean = re.sub(r"^(?:step|étape)\s*\d+\s*:\s*", "", clean, flags=re.IGNORECASE)
         if not clean:
             continue
         body.append(f"  {i + 1}.  ", style=f"bold {ACCENT}")

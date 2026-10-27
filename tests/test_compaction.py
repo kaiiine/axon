@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from src.orchestrator.context import (
+from src.orchestrator.modele.context import (
     _BACKEND_POLICY, _backend_policy, _compress_context, _estimate_tokens,
 )
 

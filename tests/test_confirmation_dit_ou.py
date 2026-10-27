@@ -24,7 +24,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from src.agents.shell.tools import set_cwd, shell_run
-from src.orchestrator import confirmation
+from src.orchestrator.noeuds import confirmation
 
 
 @pytest.fixture
@@ -153,7 +153,7 @@ def test_seul_le_dossier_vise_est_vide(monkeypatch):
 
     from langchain_core.messages import ToolMessage
 
-    from src.orchestrator import confirmation as conf
+    from src.orchestrator.noeuds import confirmation as conf
 
     racine = Path(tempfile.mkdtemp())
     essai = racine / "axon-essai"

@@ -4,11 +4,14 @@ Les appels au modèle et au web sont injectés — le graphe se teste sans rése
 """
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
+from langchain_core.messages import ToolMessage
 
 from src.agents.deep.graphe import SOUS_QUESTIONS_MAX, TOURS_MAX, construire
+from src.agents.deep.noeud import MARQUEUR
 
 
 def _faux(decoupe='["a", "b"]', manques="[]", lenteur=0.0):
@@ -131,6 +134,73 @@ def test_la_synthese_ne_voit_que_ce_qui_a_ete_trouve():
     assert "n'ajoute rien" in vus["prompt"].lower()
 
 
+# ── La bibliographie ne peut plus être inventée ───────────────────────────────
+def test_domaines_de_extrait_sans_doublon_dans_lordre():
+    from src.agents.deep.graphe import domaines_de
+
+    contenu = ("[Unity](https://docs.unity3d.com/x) et encore "
+               "[Unity](https://docs.unity3d.com/y) puis [Wiki](https://en.wikipedia.org/z)")
+
+    assert domaines_de(contenu) == ["docs.unity3d.com", "en.wikipedia.org"]
+
+
+def test_chaque_trouvaille_porte_ses_domaines():
+    """Extraits UNE fois, à la source — pas redevinés plus tard sur un texte
+    fusionnant plusieurs rapports."""
+    repondre, _, _ = _faux(decoupe='["a"]')
+    sortie = _lancer(
+        repondre, lambda s: f"voir [X](https://exemple-{s}.test/page)")
+
+    assert sortie["trouvailles"][0]["domaines"] == [f"exemple-a.test"]
+
+
+def test_la_bibliographie_ajoutee_ne_cite_que_ce_qui_a_ete_trouve():
+    """Le bug vécu : fusionner dix rapports dont les citations 【1】…【6】
+    repartent de zéro à chaque appel forçait le modèle à reconstruire une
+    bibliographie qu'il ne pouvait pas connaître — il comblait par des noms de
+    domaine plausibles mais jamais consultés (`app.studyraid.com`,
+    `learntutorials.net`, vécu sur « c'est quoi des quaternions en Unity »).
+
+    La correction porte sur la BIBLIOGRAPHIE AJOUTÉE, construite en Python à
+    partir des seuls domaines réellement extraits — pas sur la prose du
+    modèle, qu'aucun post-traitement ne filtre : s'il ignorait l'instruction et
+    citait un domaine inventé DANS son texte, rien ici ne l'en empêcherait. Ce
+    que ce test garantit : la section ajoutée par le code, elle, ne peut
+    contenir que du réel."""
+    repondre, _, _ = _faux(decoupe='["a"]')
+
+    sortie = _lancer(repondre, lambda s: f"[Unity](https://docs.unity3d.com/{s})")
+
+    ligne_bibliographie = sortie["rapport"].rsplit("Sources consultées", 1)[-1]
+    assert "app.studyraid.com" not in ligne_bibliographie
+    assert "learntutorials.net" not in ligne_bibliographie
+    assert "docs.unity3d.com" in ligne_bibliographie
+
+
+def test_sans_url_aucune_section_sources_nest_ajoutee():
+    """Une trouvaille sans lien ne doit pas produire une bibliographie vide."""
+    repondre, _, _ = _faux(decoupe='["a"]')
+
+    sortie = _lancer(repondre, lambda s: "contenu sans aucun lien")
+
+    assert "Sources consultées" not in sortie["rapport"]
+
+
+def test_le_prompt_de_synthese_interdit_les_numeros():
+    """La cause du bug, coupée à la racine : demander des citations numérotées
+    sur un texte fusionné les rendait indéchiffrables."""
+    vus = {}
+
+    def repondre(prompt):
+        if "Rédige une synthèse" in prompt:
+            vus["prompt"] = prompt
+            return "SYNTHÈSE"
+        return '["a"]' if "Découpe" in prompt else "[]"
+
+    _lancer(repondre, lambda s: f"contenu({s})")
+    assert "jamais de numéro" in vus["prompt"]
+
+
 # ── L'outil ──────────────────────────────────────────────────────────────────
 def test_une_question_vide_est_refusee():
     from src.agents.deep.tools import deep_research
@@ -154,7 +224,7 @@ def test_l_outil_DECLARE_l_intention_et_ne_cherche_pas():
 def test_le_routeur_mene_au_noeud():
     import inspect
 
-    from src.orchestrator.clarification import apres_les_outils
+    from src.orchestrator.noeuds.clarification import apres_les_outils
 
     assert "approfondir" in inspect.getsource(apres_les_outils)
 
@@ -231,8 +301,8 @@ def test_l_outil_dit_quand_prendre_l_autre():
 
 
 def test_l_outil_est_enregistre_et_dans_le_groupe_search():
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     assert "deep_research" in {t.name for t in build_all_tools()}
     assert "deep_research" in TOOL_GROUPS["search"].tools
@@ -248,8 +318,174 @@ def test_une_demande_approfondie_atteint_l_outil(requete):
     dans les quatre premiers groupes. C'est la faiblesse connue de l'étage 1, pas
     un défaut de l'outil : des mots-clés ont été essayés, sans gain mesurable et
     au prix d'une régression sur `memory`."""
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     outils = {t.name for t in ToolRetriever(build_all_tools()).get(requete)}
     assert "deep_research" in outils
+
+
+# ── note() prend `texte`, pas `content` ───────────────────────────────────────
+def test_le_rapport_de_reussite_ne_plante_pas():
+    """`erreur : note() got an unexpected keyword argument 'content'` — présent
+    depuis la création du fichier, sur les trois issues (échec, rapport vide,
+    succès). Reproduit à l'écran sur « c'est quoi des quaternions en unity »."""
+    from unittest.mock import patch
+
+    from src.agents.deep.noeud import approfondir
+
+    etat = {"messages": [ToolMessage(
+        content=json.dumps({"status": MARQUEUR, "question": "les quaternions"}),
+        tool_call_id="x", name="deep_research")]}
+
+    with patch("src.agents.deep.graphe.construire") as construire:
+        construire.return_value.stream.return_value = iter([
+            ("values", {"rapport": "un rapport", "trouvailles": [], "tours": 1}),
+        ])
+        resultat = approfondir(etat)
+
+    assert "quaternions" in resultat["messages"][0].content
+
+
+def test_un_rapport_vide_ne_plante_pas():
+    from unittest.mock import patch
+
+    from src.agents.deep.noeud import approfondir
+
+    etat = {"messages": [ToolMessage(
+        content=json.dumps({"status": MARQUEUR, "question": "x"}),
+        tool_call_id="x", name="deep_research")]}
+
+    with patch("src.agents.deep.graphe.construire") as construire:
+        construire.return_value.stream.return_value = iter([
+            ("values", {"rapport": "", "trouvailles": []}),
+        ])
+        resultat = approfondir(etat)
+
+    assert "aucune synthèse" in resultat["messages"][0].content
+
+
+def test_une_exception_ne_plante_pas():
+    from unittest.mock import patch
+
+    from src.agents.deep.noeud import approfondir
+
+    etat = {"messages": [ToolMessage(
+        content=json.dumps({"status": MARQUEUR, "question": "x"}),
+        tool_call_id="x", name="deep_research")]}
+
+    with patch("src.agents.deep.graphe.construire") as construire:
+        construire.return_value.stream.side_effect = ValueError("boom")
+        resultat = approfondir(etat)
+
+    assert "échoué" in resultat["messages"][0].content
+
+
+# ── progrès en direct, un événement par recherche ─────────────────────────────
+def test_chaque_recherche_notifie_meme_en_parallele():
+    """Vécu : « je n'ai plus accès aux sites qu'il consulte en temps réel ».
+    `.invoke()` masquait tout jusqu'au retour du sous-graphe entier. Avec
+    `stream_mode=['updates', 'values']`, chaque `chercher_une` notifie DÈS
+    QU'IL FINIT — même lancé en parallèle via `Send` (vérifié empiriquement :
+    trois tâches simultanées donnent trois événements `updates` distincts)."""
+    from unittest.mock import patch
+
+    from src.agents.deep.noeud import approfondir, set_progress_callback
+
+    evenements = []
+    set_progress_callback(lambda n, p: evenements.append((n, p)))
+    try:
+        etat = {"messages": [ToolMessage(
+            content=json.dumps({"status": MARQUEUR, "question": "x"}),
+            tool_call_id="x", name="deep_research")]}
+
+        with patch("src.agents.deep.tools.repondre_avec_modele") as rep, \
+             patch("src.agents.deep.tools.chercher_web") as chr_:
+            reponses = iter(['["a", "b"]', "[]", "synthèse"])
+            rep.return_value = lambda p: next(reponses)
+            chr_.side_effect = lambda s: f"contenu {s}"
+            approfondir(etat)
+    finally:
+        set_progress_callback(None)
+
+    noms = [n for n, _ in evenements]
+    assert noms.count("chercher_une") == 2, noms
+    assert "decomposer" in noms and "synthetiser" in noms
+
+
+def test_le_resultat_final_est_identique_avec_ou_sans_notificateur():
+    """Le passage à `.stream()` ne doit rien changer à ce que le modèle reçoit —
+    seul l'AFFICHAGE change, pas la donnée."""
+    from unittest.mock import patch
+
+    from src.agents.deep.noeud import approfondir, set_progress_callback
+
+    def _rejouer():
+        etat = {"messages": [ToolMessage(
+            content=json.dumps({"status": MARQUEUR, "question": "x"}),
+            tool_call_id="x", name="deep_research")]}
+        with patch("src.agents.deep.tools.repondre_avec_modele") as rep, \
+             patch("src.agents.deep.tools.chercher_web") as chr_:
+            reponses = iter(['["a", "b"]', "[]", "synthèse finale"])
+            rep.return_value = lambda p: next(reponses)
+            chr_.side_effect = lambda s: f"contenu {s}"
+            return approfondir(etat)["messages"][0].content
+
+    set_progress_callback(None)
+    sans = _rejouer()
+    set_progress_callback(lambda n, p: None)
+    try:
+        avec = _rejouer()
+    finally:
+        set_progress_callback(None)
+
+    assert sans == avec
+
+
+def test_un_notificateur_qui_plante_ne_casse_pas_la_recherche():
+    from unittest.mock import patch
+
+    from src.agents.deep.noeud import approfondir, set_progress_callback
+
+    def _casse(n, p):
+        raise RuntimeError("boom")
+
+    set_progress_callback(_casse)
+    try:
+        etat = {"messages": [ToolMessage(
+            content=json.dumps({"status": MARQUEUR, "question": "x"}),
+            tool_call_id="x", name="deep_research")]}
+        with patch("src.agents.deep.tools.repondre_avec_modele") as rep, \
+             patch("src.agents.deep.tools.chercher_web") as chr_:
+            rep.return_value = lambda p: "[]"
+            chr_.side_effect = lambda s: "contenu"
+            resultat = approfondir(etat)
+    finally:
+        set_progress_callback(None)
+
+    assert resultat["messages"]
+
+
+# ── détail de l'échec, pas juste « — échec » ────────────────────────────────
+# Vécu : cinq recherches en échec d'affilée sur `/deep`, sans un seul indice
+# de CE qui avait échoué — Tavily hors service ? clé absente ? DNS ? La
+# raison existait déjà dans `contenu`, seul l'écran la taisait.
+
+def test_une_recherche_qui_leve_porte_le_message_dans_contenu():
+    def chercher(sujet: str) -> str:
+        raise ConnectionError("Tavily: 503 Service Unavailable")
+
+    resultat = _lancer(*_faux()[:1] + (chercher,))
+    trouvaille = resultat["trouvailles"][0]
+    assert trouvaille["contenu"] == "[recherche échouée : Tavily: 503 Service Unavailable]"
+
+
+def test_une_exception_sans_message_montre_au_moins_son_type():
+    """`str(ConnectionError())` est vide — sans repli, l'écran afficherait
+    « — échec : » sans rien derrière, aussi inexploitable qu'avant le fix."""
+    def chercher(sujet: str) -> str:
+        raise ConnectionError
+
+    resultat = _lancer(*_faux()[:1] + (chercher,))
+    trouvaille = resultat["trouvailles"][0]
+    assert trouvaille["contenu"] == "[recherche échouée : ConnectionError]"

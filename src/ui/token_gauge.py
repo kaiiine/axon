@@ -6,11 +6,11 @@ from __future__ import annotations
 _input_tokens: int = 0
 _output_tokens: int = 0
 
-# Les fenêtres de contexte viennent de `orchestrator.context` : la jauge et le
+# Les fenêtres de contexte viennent de `orchestrator.modele.context` : la jauge et le
 # seuil de compression doivent répondre la MÊME chose à « où en est-on de la
 # fenêtre ». Deux tables séparées finissaient par diverger, et l'utilisateur
 # voyait alors 60 % pendant qu'une compression se déclenchait.
-from src.orchestrator.context import _CONTEXT_LIMIT_DEFAUT, _CONTEXT_LIMITS
+from src.orchestrator.modele.context import _CONTEXT_LIMIT_DEFAUT, _CONTEXT_LIMITS
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 

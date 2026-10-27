@@ -51,7 +51,7 @@ def _vocabulaire_natif() -> set[str]:
     if _vocabulaire is not None:
         return _vocabulaire
     try:
-        from src.orchestrator.registry import build_all_tools
+        from src.orchestrator.routage.registry import build_all_tools
     except Exception:
         return set()
     _vocabulaire = set().union(*(jetons(f"{o.name} {o.description or ''}")

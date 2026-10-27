@@ -26,7 +26,7 @@ def _saisir(frappes: str) -> str:
     """Rejoue des frappes sur la session réelle et rend ce qu'elle a validé."""
     from prompt_toolkit.history import InMemoryHistory
 
-    from src.ui.streaming import build_session
+    from src.ui.saisie import build_session
 
     with create_pipe_input() as tuyau:
         session = build_session(history=InMemoryHistory(),
@@ -106,7 +106,7 @@ def test_la_session_est_bien_multiligne():
     insérer un retour, quelles que soient les liaisons."""
     from prompt_toolkit.history import InMemoryHistory
 
-    from src.ui.streaming import build_session
+    from src.ui.saisie import build_session
 
     with create_pipe_input() as tuyau:
         session = build_session(history=InMemoryHistory(),
@@ -132,9 +132,9 @@ def test_entree_ne_traite_aucun_cas_particulier_de_completion():
     """
     import inspect
 
-    from src.ui import streaming
+    from src.ui import saisie
 
-    source = inspect.getsource(streaming._make_keybindings)
+    source = inspect.getsource(saisie._make_keybindings)
 
     assert "apply_completion" not in source, (
         "Entrée ne doit pas réappliquer une complétion que Tab a déjà insérée")

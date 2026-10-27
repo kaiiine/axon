@@ -25,7 +25,7 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from src.orchestrator.clarification import (
+from src.orchestrator.noeuds.clarification import (
     QUESTIONS,
     apres_les_outils,
     champs_manquants,
@@ -82,7 +82,7 @@ def test_le_graphe_s_arrete_et_pose_la_question():
     from langgraph.checkpoint.memory import MemorySaver
     from langgraph.graph import END, START, StateGraph
 
-    from src.orchestrator.hitl import CLARIFICATION, demande_en_attente, reponse
+    from src.orchestrator.commun.hitl import CLARIFICATION, demande_en_attente, reponse
 
     class Etat(TypedDict):
         messages: list

@@ -383,16 +383,21 @@ def test_une_question_betting_hors_perimetre_reste_posable(question):
 
 def test_le_garde_de_clarification_est_cable_avant_le_garde_de_provenance():
     """Ordre voulu : on corrige d'abord la question inutile, puis on vérifie la
-    provenance de la réponse produite. L'inverse validerait une question."""
+    provenance de la réponse produite. L'inverse validerait une question.
+
+    L'ordre a quitté `graph.py` avec le nœud : dans `noeuds/chat.py`, les
+    correcteurs (dont la clarification de périmètre, via `appliquer_les_corrections`)
+    tournent AVANT `_garde_du_domaine` (la provenance). On vérifie cet ordre là
+    où il vit désormais."""
     import inspect
 
-    from src.orchestrator import graph
+    from src.orchestrator.noeuds import chat
 
-    source = inspect.getsource(graph)
-    position_clarif = source.index("redundant_scope_question")
-    position_garde = source.index("conversation.guard import enforce")
+    source = inspect.getsource(chat)
+    position_corrections = source.index("appliquer_les_corrections(")
+    position_garde = source.index("_garde_du_domaine(")
 
-    assert position_clarif < position_garde
+    assert position_corrections < position_garde
 
 
 # ══ §5 — Fenêtre : un match du 23 août ne peut pas répondre au 6-7 ═══════════

@@ -117,7 +117,12 @@ _SECRET_RE = re.compile(
 def _redact(text: str) -> str:
     return _SECRET_RE.sub(r'\1=***REDACTED***', text)
 
-def _similarity(a: str, b: str) -> float:
+def _recouvrement_de_mots(a: str, b: str) -> float:
+    """Part de mots communs — PAS la même mesure que le `_similarity` de
+    `filesystem/tools.py` et `slack/tools.py`, qui comparent caractère par
+    caractère (`SequenceMatcher`). Les trois portaient le même nom ; deux
+    entrées de mémoire reformulées avec les mêmes mots se ressemblent ici et
+    pas là-bas. Le nom dit maintenant lequel des deux on lit."""
     wa = set(a.lower().split())
     wb = set(b.lower().split())
     if not wa or not wb:
@@ -130,7 +135,7 @@ def _is_duplicate(entry_md: str, file_path: Path, threshold: float = 0.85) -> bo
     existing = file_path.read_text(encoding="utf-8", errors="replace")
     entries = re.split(r'\n(?=## \d{4}-\d{2}-\d{2})', existing)
     for past in entries[:5]:
-        if _similarity(entry_md, past) > threshold:
+        if _recouvrement_de_mots(entry_md, past) > threshold:
             return True
     return False
 

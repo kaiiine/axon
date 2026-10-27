@@ -35,3 +35,8 @@ cli:
 groq:
   model: "openai/gpt-oss-20b"
   api_key: ${GROQ_API_KEY}
+
+openrouter:
+  model: "minimax/minimax-m3"
+  coding_model: "minimax/minimax-m3"
+  providers: ["CoreWeave", "ModelRun"]

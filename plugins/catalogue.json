@@ -1,0 +1,13 @@
+{
+  "plugins": [
+    {
+      "id": "axon-overlay",
+      "nom": "Axon Overlay",
+      "description": "L'île d'Axon : demandes, rappels d'études et conversation dans la barre du système",
+      "source": {
+        "git": "https://github.com/kaiiine/axon-overlay.git",
+        "ref": "main"
+      }
+    }
+  ]
+}

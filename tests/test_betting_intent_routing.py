@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.orchestrator.tool_retriever import _money_intent
+from src.orchestrator.routage.tool_retriever import _money_intent
 
 #: Les intentions à protéger. Chacune doit rendre `betting_recommend` disponible.
 INTENTIONS = [
@@ -78,8 +78,8 @@ def test_le_depouillement_coding_reste_declenche_par_le_semantique():
     source de `get()` — chaîne qui avait déjà disparu du fichier, si bien que le
     test était rouge sans que personne ne l'ait cassé ce jour-là.
     """
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     outils = {t.name for t in ToolRetriever(build_all_tools()).get(
         "lis le fichier src/main.py")}
@@ -91,7 +91,7 @@ def test_la_porte_precede_le_semantique_et_ne_depend_pas_de_lui():
     store, ni à l'embedder. Sa réponse est la même sur une machine sans Ollama."""
     import inspect
 
-    from src.orchestrator import tool_retriever
+    from src.orchestrator.routage import tool_retriever
 
     source = inspect.getsource(tool_retriever._money_intent)
 
@@ -102,8 +102,8 @@ def test_la_porte_precede_le_semantique_et_ne_depend_pas_de_lui():
 # ── Bout en bout : la sélection réelle contient bien l'outil ──────────────────
 @pytest.fixture(scope="module")
 def retriever():
-    from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import ToolRetriever
+    from src.orchestrator.routage.registry import build_all_tools
+    from src.orchestrator.routage.tool_retriever import ToolRetriever
 
     return ToolRetriever(build_all_tools())
 

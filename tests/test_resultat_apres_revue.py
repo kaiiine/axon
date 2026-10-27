@@ -14,7 +14,7 @@ import json
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from src.orchestrator.revision import _corriger_les_resultats
+from src.orchestrator.noeuds.revision import _corriger_les_resultats
 
 
 def _propose(id_msg: str = "m1", outil: str = "propose_file_change") -> ToolMessage:
@@ -107,7 +107,7 @@ def test_la_note_de_precision_interdit_de_recommencer(tmp_path, monkeypatch):
 
     Replanifier reste permis ailleurs, quand un vrai obstacle apparaît."""
     from src.agents.coding.pending import FileChange, pending_changes
-    from src.orchestrator import revision
+    from src.orchestrator.noeuds import revision
 
     pending_changes.clear()
     pending_changes.add(FileChange(path=str(tmp_path / "tri.py"), original="",

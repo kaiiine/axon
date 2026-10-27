@@ -18,8 +18,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from src.agents.coding.pending import FileChange, pending_changes
-from src.orchestrator.hitl import DIFF, demande_en_attente, reponse
-from src.orchestrator.revision import (
+from src.orchestrator.commun.hitl import DIFF, demande_en_attente, reponse
+from src.orchestrator.noeuds.revision import (
     APPLIQUER,
     PRECISER,
     REFUSER,
@@ -162,7 +162,7 @@ def test_le_fichier_n_est_ecrit_QU_UNE_fois_malgre_le_rejeu(tmp_path, monkeypatc
     pending_changes.add(FileChange(path=str(chemin), original="",
                                    proposed="x", description="d"))
 
-    import src.orchestrator.revision as revision
+    import src.orchestrator.noeuds.revision as revision
     vrai = revision.appliquer
     monkeypatch.setattr(revision, "appliquer",
                         lambda c: (ecritures.append("appel"), vrai(c))[1])

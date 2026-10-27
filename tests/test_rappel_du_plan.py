@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from src.agents.coding.pending import dev_plan
-from src.orchestrator.revision import rappel_du_plan
+from src.orchestrator.noeuds.revision import rappel_du_plan
 
 
 @pytest.fixture(autouse=True)

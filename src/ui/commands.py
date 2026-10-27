@@ -16,7 +16,7 @@ from .config import SessionConfig
 from src.infra.checkpoint import load_thread_cwd, save_thread_cwd, save_last_thread
 from src.agents.shell.tools import get_cwd, set_cwd
 from langchain_core.messages import SystemMessage
-from src.orchestrator.graph import _SUMMARY_MARKER, _estimate_tokens, _cap_tool_messages
+from src.orchestrator.modele.context import _SUMMARY_MARKER, _estimate_tokens, _cap_tool_messages
 
 
 debug_state = {"enabled": False}
@@ -36,6 +36,8 @@ _COMMANDS = [
     ("/deep <sujet>",     "recherche approfondie — décompose en sous-questions, cherche, recoupe"),
     ("/graph [projet]",   "génère GRAPH_REPORT.md + graph.json + notes Obsidian via graphify (subprocess direct)"),
     ("/mcp <sous-cmd>",   "serveurs MCP — list · add · remove · enable · disable · test [--deep] · tools · refresh · restart"),
+    ("/plugin [sous-cmd]", "marketplace des plugins — list · install · update · remove (sans argument : la liste)"),
+    ("/marketplace",       "choisir un plugin à installer dans la marketplace"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
@@ -446,6 +448,18 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         except Exception as e:
             return command_panel(f"erreur mcp : {e}", error=True)
 
+    if cmd in ("/plugin", "/marketplace") or cmd.startswith(("/plugin ", "/plugins")):
+        from rich.console import Console
+        from src.plugins.commandes import handle_plugin
+        from src.ui.picker import pick
+
+        arguments = [] if cmd in ("/marketplace", "/plugins") else cmd.split()[1:]
+        sortie = console or Console()
+        texte = handle_plugin(arguments,
+                              choisir=lambda options, titre: pick(options, title=titre),
+                              annoncer=lambda ligne: sortie.print(f"[dim]  {ligne}[/dim]"))
+        return command_panel(texte, error=texte.startswith("✗"))
+
     if cmd.startswith("/keys"):
         from src.llm.key_pool import get_pool
         from rich.table import Table
@@ -535,7 +549,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         lp = cmd.split(" ", 1)[1].strip().lower()
         if lp in {"fr", "en", "auto"}:
             cfg.lang_pref = lp
-            from src.orchestrator.graph import set_lang_pref
+            from src.orchestrator.noeuds.chat import set_lang_pref
             set_lang_pref(lp)
             return command_panel(f"langue : {cfg.lang_pref}")
         return command_panel("langue invalide. options : fr · en · auto", error=True)
@@ -778,8 +792,9 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
             return command_panel("pas de graph actif", error=True)
         try:
             from src.infra.settings import settings
-            from src.orchestrator.context import _backend_policy
-            from src.orchestrator.graph import _compress_context, _chat_node_factory
+            from src.orchestrator.modele.context import _backend_policy
+            from src.orchestrator.modele.context import _compress_context
+            from src.orchestrator.noeuds.chat import _chat_node_factory
             from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
             from langchain_core.messages import RemoveMessage
 

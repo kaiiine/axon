@@ -22,6 +22,25 @@ _CHAMPS = ("to", "cc", "bcc", "subject", "body",
 _draft: dict = {c: None for c in _CHAMPS} | {"has_draft": False}
 
 
+_ADRESSE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+_TROU = re.compile(r"\[[^\]\n]{2,40}\](?!\()")
+
+
+def _refus_brouillon(to: str, subject: str, body: str) -> str | None:
+    """Un brouillon qui n'a ni destinataire valide ni corps terminé ne se prépare
+    pas : le refus dit au modèle quoi faire, la question à l'utilisateur lui revient."""
+    adresses = [a.strip() for a in re.split(r"[,;]", to or "") if a.strip()]
+    if not adresses or not all(_ADRESSE.match(a) for a in adresses):
+        return ("Brouillon refusé : destinataire absent ou invalide. Appelle ask_clarification "
+                "pour obtenir l'adresse — ne la devine pas — puis rappelle gmail_send_email.")
+    if not (subject or "").strip() or not (body or "").strip():
+        return "Brouillon refusé : objet ou corps vide. Rédige-les avant de rappeler gmail_send_email."
+    if _TROU.search(body):
+        return ("Brouillon refusé : le corps contient des [champs à remplir]. Obtiens la valeur "
+                "avec ask_clarification, ou reformule sans elle.")
+    return None
+
+
 def _vider_brouillon() -> None:
     _draft.update({c: None for c in _CHAMPS})
     _draft["has_draft"] = False
@@ -239,10 +258,58 @@ def gmail_search(query: str = "newer_than:7d", max_results: int = 7) -> str:
     )
     return f"📬 **{len(rows)} mail(s)**\n\n{table}"
 
+def _texte_brut(html_ou_texte: str) -> str:
+    """Un corps de mail HTML lisible par un LLM sans le bruit des balises."""
+    import html as _html
+
+    if "<" not in html_ou_texte:
+        return html_ou_texte
+    sans_scripts = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html_ou_texte)
+    sans_balises = re.sub(r"(?s)<[^>]+>", " ", sans_scripts)
+    return re.sub(r"[ \t]+", " ", _html.unescape(sans_balises)).strip()
+
+
+def _resumer_le_corps(sujet: str, corps: str) -> str:
+    """Un vrai résumé généré par un LLM, pas une troncature mécanique du mail.
+
+    Même chemin que `_generer_via_skill` (src/agents/study/tools.py) : un appel
+    direct hors graphe, qui parcourt les clés du backend courant puis les
+    fournisseurs de repli — une clé épuisée ne doit pas faire échouer le résumé.
+    """
+    from langchain_core.messages import HumanMessage
+    from src.infra.settings import settings
+    from src.llm.models import make_orchestrator_llm_with_key
+    from src.llm.rotation import clients, marquer_echec, vaut_la_peine_de_reessayer
+    from src.orchestrator.commun.messages import texte_du_contenu
+
+    corps = corps.strip()
+    if not corps:
+        return "_(mail sans corps lisible)_"
+    prompt = (
+        "Résume ce mail en 3 à 5 phrases, en français, en gardant les informations "
+        "concrètes (dates, montants, demandes, décisions à prendre). Pas de formule "
+        "de politesse ni de méta-commentaire, va droit au contenu.\n\n"
+        f"Objet : {sujet or '(sans objet)'}\n\n{corps[:6000]}"
+    )
+    derniere: Exception | None = None
+    for fournisseur, cle, llm in clients(settings.llm_backend, make_orchestrator_llm_with_key):
+        try:
+            reponse = llm.invoke([HumanMessage(content=prompt)])
+            texte = texte_du_contenu(reponse.content).strip()
+            if texte:
+                return texte
+        except Exception as exc:  # noqa: BLE001 — fournisseur suivant
+            derniere = exc
+            marquer_echec(fournisseur, cle, exc)
+            if not vaut_la_peine_de_reessayer(exc):
+                break
+    raise RuntimeError(str(derniere) if derniere else "aucun fournisseur n’a répondu")
+
+
 @tool
 def gmail_summarize(message_id: str) -> str:
     """
-    Lit et résume le contenu complet d'un email Gmail à partir de son identifiant.
+    Lit un email Gmail complet et en génère un vrai résumé (pas un extrait brut).
 
     Utilise ce tool quand l'utilisateur veut :
     - lire le contenu d'un mail en détail
@@ -252,45 +319,48 @@ def gmail_summarize(message_id: str) -> str:
     Mots-clés : mail, email, lire, contenu, résumé, corps du message, détail
 
     **Args:**
-        - `message_id` (str) : Identifiant Gmail du message à résumer  
+        - `message_id` (str) : Identifiant Gmail du message à résumer
           (obtenu via `gmail_search()` ou depuis l’URL Gmail).
 
     **Returns:**
-        - Chaîne Markdown avec :
-            * Expéditeur, Objet, Date
-            * Extrait généré par Gmail
-            * Début du corps (max 1000 caractères)
+        - Chaîne Markdown avec Expéditeur, Date et un résumé généré par LLM
+          (3 à 5 phrases). Si aucun fournisseur LLM ne répond, se replie sur un
+          extrait brut du corps plutôt que d'échouer.
 
     **Raises:**
         - Erreurs API Gmail si l’ID est invalide ou introuvable
-
-    **Note:**
-        - HTML → texte brut automatique
-        - Corps tronqué pour éviter les réponses trop longues
     """
     service = get_gmail_service()
     msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()
 
     headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
     snippet = msg.get("snippet", "")
-    body_parts = []
+    plain_parts, html_parts = [], []
 
     def extract_parts(payload):
-        if "body" in payload and "data" in payload["body"]:
-            body_parts.append(base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore"))
+        data = payload.get("body", {}).get("data")
+        if data:
+            texte = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+            (plain_parts if payload.get("mimeType") == "text/plain" else html_parts).append(texte)
         for part in payload.get("parts", []):
             extract_parts(part)
 
     extract_parts(msg["payload"])
-    body_text = "\n".join(body_parts)
+    corps_brut = "\n".join(plain_parts) if plain_parts else "\n".join(html_parts)
+    body_text = _texte_brut(corps_brut).strip() or snippet
+    sujet = headers.get("Subject") or "(sans objet)"
+
+    try:
+        resume = _resumer_le_corps(sujet, body_text)
+    except Exception as exc:  # noqa: BLE001 — dégrade plutôt qu'échoue
+        extrait = body_text[:1000] + ("..." if len(body_text) > 1000 else "")
+        resume = f"_(résumé indisponible : {exc})_\n\n**Extrait :**\n{extrait}"
 
     return (
-        f"# 📨 Résumé du mail\n"
+        f"# 📨 {sujet}\n"
         f"**De :** {headers.get('From')}  \n"
-        f"**Objet :** {headers.get('Subject')}  \n"
         f"**Date :** {headers.get('Date')}  \n\n"
-        f"**Extrait :**\n{snippet}\n\n"
-        f"**Corps (début) :**\n{body_text[:1000]}{'...' if len(body_text) > 1000 else ''}"
+        f"{resume}"
     )
 
 @tool
@@ -306,11 +376,15 @@ def gmail_send_email(to: str, subject: str, body: str, cc: str = "",
 
     Mots-clés : envoyer mail, écrire email, rédiger message, gmail, email, destinataire, sujet
 
+    Rédiger le texte : si le corps est à écrire ou à réécrire, appelle d'abord
+    load_skill(stack="redaction"), SEUL dans son tour, puis ce tool avec le texte
+    qui en suit les règles. Un texte dicté mot pour mot n'en a pas besoin.
+
     Le corps s'écrit en MARKDOWN : titres, **gras**, listes, tableaux et liens sont
     mis en forme dans le mail envoyé, en HTML comme en version texte.
 
     **Args:**
-        - `to` (str) : Adresse du destinataire (plusieurs séparées par des virgules)
+        - `to` (str) : Adresse du destinataire (plusieurs séparées par des virgules). Jamais devinée : inconnue → ask_clarification d'abord
         - `subject` (str) : Objet du mail
         - `body` (str) : Corps du message, en markdown
         - `cc` (str, optionnel) : copie
@@ -320,6 +394,9 @@ def gmail_send_email(to: str, subject: str, body: str, cc: str = "",
     **Returns:**
         - Markdown affichant le brouillon créé et rappelant les prochaines actions possibles
     """
+    refus = _refus_brouillon(to, subject, body)
+    if refus:
+        return refus
     _vider_brouillon()
     _draft.update({
         "to": to, "subject": subject, "body": body,
@@ -341,6 +418,10 @@ def gmail_reply(message_id: str, body: str, tous: bool = False) -> str:
     - relancer dans une conversation existante
 
     Mots-clés : répondre, réponse, mail, fil, conversation, relancer, suite
+
+    Rédiger le texte : si le corps est à écrire ou à réécrire, appelle d'abord
+    load_skill(stack="redaction"), SEUL dans son tour, puis ce tool avec le texte
+    qui en suit les règles. Un texte dicté mot pour mot n'en a pas besoin.
 
     À la différence de gmail_send_email, la réponse porte les en-têtes
     `In-Reply-To` et `References` et le `threadId` d'origine : elle s'affiche donc

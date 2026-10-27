@@ -210,7 +210,7 @@ def test_la_description_annonce_les_previsions():
 def test_le_routage_semantique_mene_a_l_outil():
     """La description du groupe doit couvrir « demain », sinon la question
     n'atteint jamais l'outil."""
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     couverture = TOOL_GROUPS["weather"].covers.lower()
     assert "demain" in couverture and "prévisions" in couverture

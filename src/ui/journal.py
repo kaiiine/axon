@@ -105,7 +105,7 @@ VERBES: dict[str, str] = {
     "web_search_news": "searching",
     "url_fetch": "fetching",
     "run_coding_agent": "delegating",
-    "load_skill": "loading",
+    "load_skill": "Chargement du skill",
     "axon_note": "noting",
     "gmail_search": "searching mail",
     "gmail_send_email": "drafting mail",
@@ -529,7 +529,8 @@ def bilan(journal: Journal) -> RenderableType:
     return Group(*lignes)
 
 
-def compte_rendu_de_secours(journal: "Journal | None") -> str:
+def compte_rendu_de_secours(journal: "Journal | None",
+                            constat: str = "Le modèle n'a pas conclu ce tour.") -> str:
     """Ce qui a été fait, quand le modèle n'a rien rédigé.
 
     Un tour peut s'achever sans texte : le modèle rend une réponse vide, ou le
@@ -547,7 +548,7 @@ def compte_rendu_de_secours(journal: "Journal | None") -> str:
     faites = [a for a in journal.actions if a.etat is Etat.REUSSI]
     ratees = [a for a in journal.actions if a.etat is Etat.ECHOUE]
 
-    lignes = ["_Le modèle n'a pas conclu ce tour._ Voici ce que les outils ont "
+    lignes = [f"_{constat}_ Voici ce que les outils ont "
               "réellement fait — la tâche n'est peut-être pas terminée."]
     if faites:
         lignes.append("\n**Fait**")

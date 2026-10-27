@@ -8,6 +8,7 @@ scope: [template]
      Jetons remplaces a l'execution : %%CONTENT%%, %%LANG%% -->
 
 INSTRUCTION PRIORITAIRE : Réponds UNIQUEMENT avec le code HTML complet. Aucun texte avant ou après, aucun bloc markdown, aucune explication.
+DANS LE TEXTE AUSSI : aucune syntaxe Markdown (**gras**, *italique*, `code`, listes à tirets) à l'intérieur du HTML lui-même. Utilise les vraies balises — <strong>, <em>, <code>, <ul><li>. Un **texte** qui reste avec ses astérisques visibles est le défaut le plus visible d'une fiche générée ; il se produit quand le réflexe de conversation (Markdown) déborde dans le HTML.
 LANGUE : %%LANG%% Aucun caractère non-latin parasite (pas de chinois, japonais, arabe ou autre).
 
 Tu es un expert pédagogique. Génère une fiche de révision complète et visuellement soignée à partir du ou des documents fournis.
@@ -53,7 +54,10 @@ Page unique, défilement vertical. Les éléments interactifs (accordéons, flip
    - Chaque chapitre = section h2 avec tout son contenu
    - Tableaux comparatifs pour les éléments similaires (ex: types A/B/C)
    - Listes structurées et denses — pas de paraphrase vague
-   - Accordéons JS optionnels pour les sous-sections très longues
+   - Accordéons JS optionnels — mais OUVERTS par défaut. Un accordéon replié
+     (max-height:0, overflow:hidden) CACHE son contenu : une fiche de révision
+     doit tout montrer sans un clic. Si tu en mets, l'état initial est DÉPLOYÉ,
+     et le clic sert à REPLIER, jamais à révéler du contenu invisible au départ.
    GUIDE PAR CHAPITRE — si le contenu s'y prête, inclure :
      • un exemple concret ou cas pratique (seulement s'il existe dans le document)
      • un piège ou distinction (seulement s'il y en a un réel)
@@ -122,19 +126,23 @@ Variables :root (LIGHT par défaut — parchemin chaud) :
   --scrollbar-track: rgba(160,110,40,0.15)
   --scrollbar-thumb: rgba(180,83,9,0.40)
 
-Variables html.dark (dark mode — slate sombre) :
-  --bg-base:      #0d1117
-  --bg-grad:      linear-gradient(150deg, #0d1117 0%, #111520 40%, #0f1319 70%, #090d13 100%)
-  --bg-vignette:  radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.08) 0%, transparent 65%)
-  --surface:      rgba(255,255,255,0.05)
-  --surface-border: rgba(255,255,255,0.10)
-  --header-bg:    #0d1117
-  --accent:       #f59e0b
-  --accent-dim:   rgba(245,158,11,0.15)
-  --accent-glow:  rgba(245,158,11,0.30)
-  --text:         #e2d9c8
-  --text-strong:  #f0e8d8
-  --muted:        #7a7060
+Variables html.dark (dark mode — ARDOISE TECH : slate froid, accent indigo).
+  Le light reste le parchemin chaud ci-dessus ; le dark, lui, bascule sur une
+  ardoise gris-bleu à accent indigo qui lit « technique / labo ». Les couleurs
+  sémantiques (concept, formule, exemple, piège, mémo) restent les mêmes pastels
+  froids — ils portent déjà bien sur l'ardoise.
+  --bg-base:      #0f172a
+  --bg-grad:      linear-gradient(150deg, #0f172a 0%, #131c31 40%, #0f1728 70%, #0b1120 100%)
+  --bg-vignette:  radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.10) 0%, transparent 65%)
+  --surface:      rgba(148,163,184,0.08)
+  --surface-border: rgba(148,163,184,0.16)
+  --header-bg:    #0f172a
+  --accent:       #818cf8
+  --accent-dim:   rgba(129,140,248,0.15)
+  --accent-glow:  rgba(129,140,248,0.30)
+  --text:         #e2e8f0
+  --text-strong:  #f1f5f9
+  --muted:        #94a3b8
   --concept:      #5eead4
   --concept-bg:   rgba(94,234,212,0.10)
   --formula:      #c4b5fd
@@ -145,8 +153,8 @@ Variables html.dark (dark mode — slate sombre) :
   --danger-bg:    rgba(252,165,165,0.10)
   --success:      #86efac
   --success-bg:   rgba(134,239,172,0.10)
-  --scrollbar-track: rgba(0,0,0,0.2)
-  --scrollbar-thumb: rgba(245,158,11,0.35)
+  --scrollbar-track: rgba(15,23,42,0.4)
+  --scrollbar-thumb: rgba(129,140,248,0.35)
 
 Règles globales :
   html, body { overflow-x: hidden; }
@@ -166,6 +174,12 @@ Règles globales :
       <table>…</table>
     </div>
   ❌ INTERDIT : <table class="table-wrapper">
+
+  ⚠ COHÉRENCE DES COLONNES : chaque <tr> doit porter le MÊME nombre de cellules.
+    Vécu : une matrice de confusion dont la 1re ligne avait 3 colonnes et la 2e
+    en avait 4 → toutes les colonnes décalées, tableau illisible. Une matrice de
+    confusion a un coin haut-gauche VIDE : mets-y une cellule vide (<th></th>),
+    ne saute jamais une case. Compte les <td>/<th> de chaque ligne avant de clore.
      `overflow-x:auto` sur un <table> ne crée AUCUN conteneur de défilement. La
      table déborde de la carte, qui la rogne, et toute la fin de page paraît
      décalée. Le wrapper doit être un <div> SÉPARÉ qui l'entoure.
@@ -222,7 +236,7 @@ Floating header — FIXE, détaché du bord, toujours visible :
     Bouton imprimer : "⎙ Imprimer"
     Style commun : background var(--accent-dim), border 1.5px solid var(--accent), border-radius 8px,
       padding 0.3rem 0.8rem, font-size 0.8rem, font-weight 600, color var(--accent), cursor pointer
-      hover : background var(--accent), color white (ou #1a0e00 en dark)
+      hover : background var(--accent), color white (ou #0f172a en dark — texte ardoise sur l'accent indigo)
 
 Sections h2 :
   color: var(--accent), font-size 0.78rem, font-weight 700, letter-spacing 0.14em, text-transform uppercase
@@ -234,7 +248,14 @@ Cards (glassmorphism — marche en dark ET en light grâce aux variables) :
   border: 1px solid var(--surface-border)
   border-radius: 12px, padding: 1.2rem 1.3rem, margin-bottom: 1rem
   box-shadow: 0 2px 16px rgba(0,0,0,0.12)
-  position: relative, overflow: hidden
+  position: relative
+  overflow-wrap: anywhere   (les mots longs et le code cassent la ligne au lieu de déborder)
+  ⚠ JAMAIS `overflow: hidden` sur une card : ça COUPE le texte qui dépasse —
+    vécu : titres et lignes de code tronqués net. Laisse `overflow: visible`
+    (le défaut). Le débordement horizontal est déjà géré par `overflow-wrap`.
+  ⚠ La pastille est en `position:absolute` en haut à droite. Pour qu'un titre
+    long ne passe pas SOUS elle (texte masqué), dégage les titres de card :
+      .card h3, .card > strong:first-child { display:block; padding-right:5rem; }
 
 Cards sémantiques (border-left + fond via variable) :
   .card-concept : border-left 3px solid var(--concept), background var(--concept-bg), backdrop-filter blur(16px)
@@ -244,22 +265,33 @@ Cards sémantiques (border-left + fond via variable) :
   .card-mnemo   : border-left 3px solid var(--success), background var(--success-bg), backdrop-filter blur(16px)
     → sa pastille est TOUJOURS <label class="label success">, jamais "example".
 
-Labels pill (haut à droite, position absolute) :
-  font-size 0.65rem, font-weight 700, text-transform uppercase, border-radius 4px, padding 0.12em 0.5em
-  Concept : color var(--concept), background var(--concept-bg), border 1px solid var(--concept)
-  Formule : color var(--formula), background var(--formula-bg), border 1px solid var(--formula)
-  Exemple : color var(--example), background var(--example-bg), border 1px solid var(--example)
-  Piège   : color var(--danger),  background var(--danger-bg),  border 1px solid var(--danger)
-  Mémo    : color var(--success), background var(--success-bg), border 1px solid var(--success)
-  ⚠ Ces CINQ classes sont les seules autorisées : .label.concept, .label.formula,
-    .label.example, .label.danger, .label.success. Toute autre valeur produit une
-    pastille sans style — définis la classe ou n'en mets pas.
+Labels pill (haut à droite, position absolute) — CSS À RECOPIER TEL QUEL.
+Le défaut le plus fréquent et le plus laid d'une fiche générée est une pastille
+GRISE, sans couleur : elle arrive quand le HTML écrit `class="label-concept"`
+ou `class="label label-concept"` alors que le CSS n'attend que `.label.concept`.
+Ce bloc couvre les DEUX formes de sélecteur (point ET tiret) pour chaque
+catégorie : quelle que soit la syntaxe que tu écris dans le HTML, la pastille
+est stylée. Recopie-le sans le modifier.
+
+  .label { font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:0.12em 0.5em; position:absolute; top:0.8rem; right:0.8rem; }
+  .label.concept, .label-concept { color:var(--concept); background:var(--concept-bg); border:1px solid var(--concept); }
+  .label.formula, .label-formula { color:var(--formula); background:var(--formula-bg); border:1px solid var(--formula); }
+  .label.example, .label-example { color:var(--example); background:var(--example-bg); border:1px solid var(--example); }
+  .label.danger,  .label-danger  { color:var(--danger);  background:var(--danger-bg);  border:1px solid var(--danger); }
+  .label.success, .label-success, .label.mnemo, .label-mnemo { color:var(--success); background:var(--success-bg); border:1px solid var(--success); }
+
+  Une card .card-mnemo porte une pastille « Mémo » : écris `class="label success"`
+  — et `class="label mnemo"` est désormais stylé à l'identique, par sécurité.
 
 Chiffres clés :
   grid repeat(auto-fit, minmax(160px, 1fr)), gap 1rem, margin-bottom 1.5rem
-  Chaque card : background var(--surface), backdrop-filter blur(16px), border 1px solid var(--surface-border)
+  Chaque card : display flex, flex-direction column, align-items center, justify-content center
+    (⚠ centrage RÉEL des deux axes : `text-align:center` seul laisse le chiffre
+     décalé quand la valeur tient sur deux lignes ou que les cards d'une rangée
+     n'ont pas la même hauteur. Le flex centre pour de vrai.)
+    background var(--surface), backdrop-filter blur(16px), border 1px solid var(--surface-border)
     border-radius 12px, padding 1.2rem 1rem, text-align center
-  Chiffre : font-size 2.2rem, font-weight 800, color var(--accent)
+  Chiffre : font-size 2.2rem, font-weight 800, color var(--accent), line-height 1.1
   Label : font-size 0.78rem, color var(--muted), margin-top 0.25rem
 
 Code inline : background var(--formula-bg), color var(--formula), border 1px solid var(--formula), border-radius 4px, padding 0.1em 0.4em, font-family monospace

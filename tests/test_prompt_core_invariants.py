@@ -150,13 +150,28 @@ def test_skills_garde_sa_formulation_imperative():
     assert "UNCONDITIONAL" in _SKILLS
 
 
-def test_study_n_a_pas_bouge():
-    """Bloqué par un prérequis externe : `fiche.md` et `exo.md` déclarent
-    `scope: template`, une portée qu'aucun agent ne lit, donc `load_skill` ne
-    peut pas encore les servir."""
+def test_study_pointe_vers_le_skill_au_lieu_de_le_dupliquer():
+    """Résolu autrement que prévu : `fiche.md`/`exo.md` restent `scope: template`
+    — `load_skill` ne les sert toujours pas — mais `save_study_file` les lit
+    maintenant lui-même via `templates.charger()`, quelle que soit la manière
+    dont le modèle l'appelle.
+
+    Avant : `_STUDY` recopiait ~26 lignes de règles de design (couleurs,
+    grille) parce que c'était tout ce que le modèle voyait quand il écrivait
+    le HTML lui-même (`html=`). Le skill, 315 lignes, portait en plus une
+    discipline de CONTENU (analyse obligatoire, pièges d'examen, checklist
+    anti-oubli) qu'aucune des deux copies ne reproduisait — d'où des fiches
+    vagues comparées à celles produites depuis un PDF, qui passaient déjà par
+    le skill complet.
+
+    Après : `_STUDY` n'instruit plus d'écrire du HTML — il pointe vers
+    `content=`, qui fait passer TOUJOURS par le skill, y compris depuis une
+    conversation sans PDF."""
     from src.llm.prompts import _STUDY
 
-    assert "Axon Slate Glass" in _STUDY
+    assert "Axon Slate Glass" not in _STUDY
+    assert "content=" in _STUDY
+    assert "html=" not in _STUDY.split("content=")[0]  # plus l'option par défaut
 
 
 def test_le_reste_du_noyau_est_intact():

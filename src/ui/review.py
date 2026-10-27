@@ -14,6 +14,7 @@ from rich.text import Text
 
 from src.agents.coding.pending import FileChange, pending_changes
 from src.agents.notebook.tools import CellChange, pending_cell_changes, apply_cell_change
+from .course_hitl import ReponseAilleurs, attendre_touche, lire_octet, prompt_annulable
 from .panels import ACCENT, _BOX, _BORDER
 from .picker import _ACCENT_PT
 
@@ -80,13 +81,18 @@ def _run_raw_selector(choices: List[Tuple[str, str]], on_cancel: str = "reject")
         old = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
-            ch = sys.stdin.read(1)
+            # `select` + `os.read` plutôt que `sys.stdin.read(1)` : une lecture
+            # bloquante ne se réveille pas quand l'île répond à la place du
+            # terminal (`ReponseAilleurs`, voir course_hitl.py). Même raison
+            # pour Échap seul, qui bloquait jusqu'à la touche suivante.
+            attendre_touche(fd)
+            ch = lire_octet(fd)
             if ch == "\x1b":
-                # Reads \x1b[A as 3 separate calls — rare fragmentation possible
-                # if terminal buffers differently, but acceptable for a first impl.
-                nxt = sys.stdin.read(1)
-                if nxt == "[":
-                    arrow = sys.stdin.read(1)
+                if not attendre_touche(fd, delai=0.05):
+                    return "escape"
+                nxt = lire_octet(fd)
+                if nxt == "[" and attendre_touche(fd, delai=0.05):
+                    arrow = lire_octet(fd)
                     if arrow == "A": return "up"
                     if arrow == "B": return "down"
                 return "escape"
@@ -220,7 +226,7 @@ def _ask_refinement() -> str | None:
         style=PtStyle.from_dict({"prompt": f"bold {_ACCENT_PT}"}),
     )
     try:
-        text = session.prompt("  préciser › ").strip()
+        text = prompt_annulable(session, "  préciser › ").strip()
         return text if text else None
     except (EOFError, KeyboardInterrupt):
         return None
@@ -650,7 +656,7 @@ def _prompt_input(label: str) -> str:
         from prompt_toolkit.styles import Style as PtStyle
         try:
             session = PromptSession(style=PtStyle.from_dict({"prompt": f"bold {_ACCENT_PT}"}))
-            return session.prompt(label).strip()
+            return prompt_annulable(session, label).strip()
         except (EOFError, KeyboardInterrupt):
             return ""
     try:
@@ -883,6 +889,8 @@ def servir_demande(demande) -> list[str]:
     posees = [{"question": q.texte, "choices": list(q.choix)} for q in demande.questions]
     try:
         reponses = ask_user_questions(posees)
+    except ReponseAilleurs:
+        raise                      # l'île a répondu : ce n'est pas une panne
     except Exception as erreur:
         console.print(Text(f"  erreur questionnaire : {erreur}", style="red"))
         # Une panne d'affichage ne vaut pas accord : `hitl.accorde` lit le vide

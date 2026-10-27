@@ -4,7 +4,7 @@ import base64
 import io
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 MAX_TEXT_SIZE         = 100_000  # extraction brute complète
 _ORCHESTRATOR_INJECT  =  20_000  # seuil au-delà duquel on n'injecte pas le contenu dans la conversation
@@ -42,6 +42,107 @@ def _extract_pdf(path: Path) -> str:
         return "\n\n".join(pages)[:MAX_TEXT_SIZE] or "[PDF sans texte extractible]"
     except Exception as e:
         return f"[Erreur lecture PDF: {e}]"
+
+
+def _extract_pptx(path: Path) -> str:
+    """Le texte d'un .pptx — un fichier ZIP, jamais du texte UTF-8.
+
+    Vécu : un `.pptx` de 23 Mo lu comme du texte donnait 100 000 caractères de
+    `�` — un fichier binaire qui n'a que « texte » comme catégorie ici, faute
+    d'un extracteur dédié comme pour le `.pdf`. Le modèle a improvisé un
+    `unzip -l` en shell, bloqué par la confirmation.
+    """
+    try:
+        from pptx import Presentation
+        prs = Presentation(str(path))
+        diapos = []
+        for i, diapo in enumerate(prs.slides, 1):
+            morceaux = []
+            for forme in diapo.shapes:
+                if forme.has_text_frame and forme.text_frame.text.strip():
+                    morceaux.append(forme.text_frame.text.strip())
+                if forme.has_table:
+                    for ligne in forme.table.rows:
+                        morceaux.append(" | ".join(c.text.strip() for c in ligne.cells))
+            notes = diapo.notes_slide.notes_text_frame.text.strip() \
+                if diapo.has_notes_slide else ""
+            bloc = "\n".join(morceaux) or "(diapositive sans texte)"
+            if notes:
+                bloc += f"\n[Notes] {notes}"
+            diapos.append(f"[Diapositive {i}]\n{bloc}")
+        return "\n\n".join(diapos)[:MAX_TEXT_SIZE] or "[.pptx sans texte extractible]"
+    except Exception as e:
+        return f"[Erreur lecture .pptx: {e}]"
+
+
+def _extract_xlsx(path: Path) -> str:
+    """Le texte d'un .xlsx — même famille que le .pptx, même défaut sans lui.
+
+    Une feuille immense est TRONQUÉE par lignes, jamais par colonnes : perdre
+    la fin d'un tableau laisse au moins des lignes complètes, perdre des
+    colonnes casserait chaque ligne restante.
+    """
+    try:
+        from openpyxl import load_workbook
+        classeur = load_workbook(str(path), read_only=True, data_only=True)
+        feuilles = []
+        for nom in classeur.sheetnames:
+            feuille = classeur[nom]
+            lignes = []
+            for ligne in feuille.iter_rows(values_only=True):
+                if any(c is not None for c in ligne):
+                    lignes.append(" | ".join(
+                        "" if c is None else str(c) for c in ligne))
+                if len(lignes) >= 500:
+                    lignes.append(f"[… tronqué, {feuille.max_row} lignes au total]")
+                    break
+            feuilles.append(f"[Feuille : {nom}]\n" + "\n".join(lignes))
+        return "\n\n".join(feuilles)[:MAX_TEXT_SIZE] or "[.xlsx sans contenu extractible]"
+    except Exception as e:
+        return f"[Erreur lecture .xlsx: {e}]"
+
+
+def _extract_docx(path: Path) -> str:
+    """Le texte d'un .docx — même famille, même défaut sans extracteur dédié.
+
+    Paragraphes et tableaux sont rendus DANS L'ORDRE du document : `python-docx`
+    les expose comme deux collections séparées (`.paragraphs`, `.tables`), et
+    les recoller dans l'ordre du XML (`document.element.body`) est ce qui évite
+    qu'un tableau atterrisse après tout le texte qui le suit vraiment — un
+    audit qui commente « le tableau ci-dessus » perdrait son référent.
+    """
+    try:
+        from docx import Document
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
+        doc = Document(str(path))
+        morceaux = []
+        for enfant in doc.element.body.iterchildren():
+            if enfant.tag.endswith("}p"):
+                p = Paragraph(enfant, doc)
+                if not p.text.strip():
+                    continue
+                prefixe = "## " if p.style and p.style.name.startswith("Heading") else ""
+                morceaux.append(f"{prefixe}{p.text.strip()}")
+            elif enfant.tag.endswith("}tbl"):
+                t = Table(enfant, doc)
+                for ligne in t.rows:
+                    morceaux.append(" | ".join(c.text.strip() for c in ligne.cells))
+        return "\n".join(morceaux)[:MAX_TEXT_SIZE] or "[.docx sans texte extractible]"
+    except Exception as e:
+        return f"[Erreur lecture .docx: {e}]"
+
+
+#: Un extracteur par extension, appelé par `_add_text` ET par `local_read_file` —
+#: un seul endroit qui sait comment lire chaque format, pas deux qui divergent.
+EXTRACTEURS_OFFICE: dict[str, Callable[[Path], str]] = {
+    ".pptx": _extract_pptx,
+    ".ppsx": _extract_pptx,
+    ".xlsx": _extract_xlsx,
+    ".xlsm": _extract_xlsx,
+    ".docx": _extract_docx,
+}
 
 
 @dataclass
@@ -97,8 +198,11 @@ class AttachmentStore:
     def _add_text(self, path: Path) -> Attachment:
         size = path.stat().st_size
         size_hint = f"{size // 1024}KB" if size >= 1024 else f"{size}B"
-        if path.suffix.lower() == ".pdf":
+        suffixe = path.suffix.lower()
+        if suffixe == ".pdf":
             content = _extract_pdf(path)
+        elif suffixe in EXTRACTEURS_OFFICE:
+            content = EXTRACTEURS_OFFICE[suffixe](path)
         else:
             try:
                 content = path.read_text(encoding="utf-8", errors="replace")[:MAX_TEXT_SIZE]
@@ -178,33 +282,44 @@ def get_clipboard_image():
     return None
 
 
-def open_file_picker() -> Optional[str]:
-    """Ouvre un sélecteur de fichier natif. Retourne le chemin ou None."""
+def open_file_picker(dossier: bool = False) -> Optional[str]:
+    """Ouvre un sélecteur natif — de fichier, ou de dossier si `dossier`.
+    Retourne le chemin choisi, ou None si annulé.
+
+    L'île (couche layer-shell TOP) passerait au-dessus du dialogue : elle est
+    priée de s'effacer le temps du choix, puis de revenir. Sans île lancée,
+    `pont.envoyer` échoue vite et en silence."""
+    from .pont_overlay import pont
+
+    pont.envoyer(type="selecteur_fichier", ouvert=True)
+    try:
+        return _ouvrir_selecteur_natif(dossier)
+    finally:
+        pont.envoyer(type="selecteur_fichier", ouvert=False)
+
+
+def _ouvrir_selecteur_natif(dossier: bool = False) -> Optional[str]:
+    """Essaie zenity, puis kdialog, puis tkinter — le premier PRÉSENT décide.
+    Une annulation dans zenity ne doit pas ouvrir un second dialogue kdialog :
+    on ne passe au suivant que si l'outil n'est pas installé."""
     import subprocess
 
-    # zenity (GNOME / Wayland)
-    try:
-        r = subprocess.run(
-            ["zenity", "--file-selection", "--title=Joindre un fichier"],
-            capture_output=True, text=True, timeout=120,
-        )
+    titre = "Choisir un dossier" if dossier else "Joindre un fichier"
+    commandes = (
+        ["zenity", "--file-selection", f"--title={titre}"] + (["--directory"] if dossier else []),
+        ["kdialog", "--getexistingdirectory" if dossier else "--getopenfilename", ".", "--title", titre],
+    )
+    for commande in commandes:
+        try:
+            r = subprocess.run(commande, capture_output=True, text=True, timeout=120)
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            return None
         if r.returncode == 0:
             return r.stdout.strip() or None
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        return None
 
-    # kdialog (KDE)
-    try:
-        r = subprocess.run(
-            ["kdialog", "--getopenfilename", ".", "--title", "Joindre un fichier"],
-            capture_output=True, text=True, timeout=120,
-        )
-        if r.returncode == 0:
-            return r.stdout.strip() or None
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    # tkinter fallback
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -212,7 +327,10 @@ def open_file_picker() -> Optional[str]:
         root.withdraw()
         root.wm_attributes("-topmost", 1)
         root.update()
-        path = filedialog.askopenfilename(title="Joindre un fichier")
+        if dossier:
+            path = filedialog.askdirectory(title=titre)
+        else:
+            path = filedialog.askopenfilename(title=titre)
         root.destroy()
         return path or None
     except Exception:

@@ -1,0 +1,28 @@
+# Démon des tâches planifiées et des rappels d'études (src/cron_daemon.py).
+#
+# Sans lui, AUCUN rappel ne part : ni les rappels d'échéance (J-7, J-3, J-1),
+# ni le récapitulatif d'études du matin, ni l'avis « rappel manqué » au
+# démarrage quand le PC était éteint à l'heure prévue.
+#
+# Lié à la session graphique : les notifications passent par notify-send, qui
+# a besoin du bus D-Bus de la session et d'un démon de notifications.
+#
+#   cp ops/systemd/axon-cron.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now axon-cron.service
+[Unit]
+Description=AXON — tâches planifiées et rappels d'études
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+WorkingDirectory=%h/Documents/projets-perso/axon
+ExecStart=%h/Documents/projets-perso/axon/.venv/bin/python -m src.cron_daemon
+# Le démon gère lui-même les doublons (cron.pid) ; un plantage le relance.
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

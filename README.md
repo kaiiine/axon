@@ -19,7 +19,7 @@
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kaiiine/axon/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kaiiine/axon/main/install.sh | bash
 ```
 
 > Clones the repo, installs dependencies, configures APIs, downloads Ollama models, installs Playwright, and creates a global `axon` alias.
@@ -28,21 +28,34 @@ Two directories, deliberately separate:
 
 | | |
 |---|---|
-| `~/axon` | the repo — code, `.env`, `.venv`. Override with `AXON_INSTALL_DIR`. |
-| `~/.axon` | Axon's **state** — semantic index, key-pool health, project memory. |
+| the repo | code, `.env`, `.venv`. Run from an existing clone (`bash install.sh`), it installs **in place**; the one-liner clones into `~/ai-agent`. Override with `AXON_INSTALL_DIR`. |
+| `~/.axon` | Axon's **state** — logs, JSON, semantic index, key-pool health, project memory. The only directory Axon creates in your home. |
 
 Keeping them apart is what makes a reinstall safe: wiping the repo to start over
 must not take with it what Axon has learned.
 
 ```bash
-# Or manually:
-git clone https://github.com/kaiiine/axon.git ~/axon && cd ~/axon && bash setup.sh
+# Or from a clone you already have:
+cd ai-agent && bash install.sh
 
 # Reconfigure integrations without reinstalling:
 bash setup.sh --config-only
 ```
 
-**Requirements:** Python 3.11+ · [Ollama](https://ollama.com/download)
+On **Windows**, from a clone, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup.ps1
+powershell -ExecutionPolicy Bypass -File setup.ps1 -ConfigSeulement   # reconfigure only
+```
+
+Both scripts share the same integration menu (`src/installation`), install the
+reminder daemon with the session (systemd, launchd or a scheduled task) and
+build the desktop island for the platform.
+
+**Requirements:** Python 3.11+ · [Ollama](https://ollama.com/download) — on
+macOS, [Homebrew](https://brew.sh) lets the setup install Ollama itself; on
+Windows, `winget` does.
 
 ---
 
@@ -247,6 +260,54 @@ Injected into future sessions on the same repo. Browsable in Obsidian (auto-conf
 - **`/fiche`**: single-page HTML covering all concepts, formulas, tables, pitfalls and summary
 - **`/exo`**: interactive exercises with instant feedback, final score, replay
 - Auto-detection: writing "sheet" / "study" with an attached PDF triggers `/fiche`
+- **`/fiche <suivi_id>`** / **`/exo <suivi_id>`**: generate from the documents already attached to a study tracker — no re-`/attach`, and the result is filed under it
+- A second generation of the same kind for the same tracker is **refused while one is running**. The state is persisted, so it survives a tab switch, an island reconnect or a CLI restart; a generation left "running" by a crash is marked failed at the next start, so it never blocks a new one.
+
+### Study tracking
+
+```
+› I have a machine learning exam on November 25
+› What are my next exams?
+› Let's take stock of my ML exam
+› Check how far along my project is
+```
+
+A **tracker** (*suivi*) is the root: a subject, an exam prep, a project, or
+quick one-off work — it does not need a date. Under it:
+
+| | |
+|---|---|
+| **Resources** | documents, folders, Git repos, links — shared between trackers by ID, never copied; an unreachable one is flagged, not purged |
+| **Deadlines** | homework, exam, project delivery — each with its own reminders |
+| **Exercises & tasks** | exercises keep attempts, difficulties and hints given (one at a time, never the full solution); tasks are just to-do / done |
+| **Progress log** | what you declared vs. what a tool observed vs. what Axon only suggested |
+| **Results** | generated sheets/exercises; quick work can be attached to a tracker afterwards |
+| **Project checks** | Axon inspects the linked repo/folder **read-only** with its usual tools, then records what is present, missing, and *unverifiable* — kept as a dated report, never applied automatically |
+
+Missing dates or trackers are asked for (`ask_clarification`), never invented.
+
+**Reminders** — default 7, 3 and 1 day before a deadline, at 9:00
+**Europe/Paris** (summer/winter time handled). They are cron tasks, delivered
+as desktop notifications by the cron daemon, so they fire with Axon closed —
+as long as the daemon runs and your session is open. Postponing a deadline
+reschedules its reminders at the same offsets, with explicit rules:
+
+- the new reminder is created **before** the old one is removed — a crash in between leaves a duplicate, never a lost reminder;
+- a reminder that would now fall in the past is disabled, not left on the old date;
+- an old reminder whose offset is unknown is **left as is and reported**, never rescheduled on a guessed value.
+
+**When the computer was off or asleep** — a deadline reminder missed while the
+machine was off is shown at the next start with its real content ("Final
+delivery — in 3 days"), once per deadline; one missed during sleep still goes
+out on wake-up (up to 12 h late) instead of being silently skipped.
+
+**Daily recap** — once a day, from 6:00 (session start or wake-up), a desktop
+notification lists the deadlines of the next 14 days and the state of every Git
+repository linked to an active tracker: branch, age of the last commit,
+uncommitted files. Nothing to report, no notification.
+
+Everything lives in `~/.axon/etudes.json` (atomic writes, schema versioned and
+migrated in place).
 
 ### Presentations & slides
 
@@ -382,42 +443,53 @@ Generates flowcharts, sequence diagrams, class diagrams, ER diagrams, C4 contain
 Native notebook editing: reads cells with indices, edits cell-by-cell with HITL review, inserts new cells, runs and checks outputs. Never corrupts `.ipynb` JSON.
 
 ---
+## Desktop island ([`axon-overlay`](https://github.com/kaiiine/axon-overlay))
 
-## IDE integration (Zed, Cursor, Continue.dev)
+A plugin with its own repository — a small floating island anchored at the top of the screen (GTK4 +
+gtk4-layer-shell + WebKitGTK, Svelte front-end), talking to the running CLI
+over a local Unix socket (`$XDG_RUNTIME_DIR/axon/overlay.sock`, mode 0600).
+If the island is not running, Axon works exactly as before.
 
-Axon exposes two independent servers for IDE use:
+- **Home & chat** — mascot reflecting what Axon is doing, the same `/` commands as the terminal, and every human-in-the-loop question (permission, clarification, diff, plan) answerable from the island.
+- **Code** — files and unified diffs as they are touched.
+- **Integrations** — one-click Gmail, Jira and Google Calendar dashboards, read-only shortcuts that skip the agent loop.
+- **Études** — drop a document (or pick one) for quick work; create trackers; generate a sheet or exercises per tracker with a live status (*generating* → *open result* / *retry*); add, postpone or cancel deadlines; archive a tracker; reopen recent results. Forms close only once the CLI has confirmed — on failure they keep what you typed and show the error.
+- **Project page** — click a tracker to open its page: deadlines (add one, schedule its reminders with the bell), a month calendar of deadlines, reminders, commits, generated sheets and checks, linked repositories with their live Git state, tasks, the last check. Local data shows instantly; an **AI summary** of the whole project (READMEs, specs, recent commits, tasks, deadlines) streams in token by token, is kept for the next visit, and can be regenerated. One-click AI actions: check progress, propose tasks, take stock.
 
-### MCP server — tools for any LLM
-
-Exposes all Axon tools (filesystem, git, shell, search…) to Copilot, Claude, or any MCP-compatible LLM.
+The island is a **plugin**: install it from the marketplace, then restart Axon.
 
 ```bash
-python src/mcp_server.py
+# Arch: system packages (not pip)
+sudo pacman -S python-gobject gtk4 gtk4-layer-shell webkitgtk-6.0
 ```
 
-**Zed** (`~/.config/zed/settings.json`):
-```json
-"context_servers": {
-  "axon": {
-    "command": {
-      "path": "/path/to/.venv/bin/python",
-      "args": ["/path/to/ai-agent/src/mcp_server.py"]
-    }
-  }
-}
+```
+/plugin                      # pick "Axon Overlay" → Installer
+/plugin install https://github.com/kaiiine/axon-overlay.git   # explicit URL; or ./axon-overlay for a local working tree
 ```
 
-**Claude Desktop** (`~/.config/claude/claude_desktop_config.json`):
-```json
-"mcpServers": {
-  "axon": {
-    "command": "/path/to/.venv/bin/python",
-    "args": ["/path/to/ai-agent/src/mcp_server.py"]
-  }
-}
-```
+It lands in `~/.axon/plugins/axon-overlay`; open/close it with its
+`waybar-toggle.sh` (bind it to a key or a Waybar button). On macOS and Windows
+the same plugin builds the Tauri app (menu-bar / tray icon).
 
-### MCP client — external tools inside Axon
+---
+
+## Plugins — the marketplace
+
+`/plugin` (or `/marketplace`) lists the catalogue (`plugins/catalogue.json`,
+plus your own repos in `~/.axon/plugins/catalogue.json`) and installs the one
+you pick into `~/.axon/plugins/<id>`. A plugin is a git repo — or a
+sub-folder of one — with a `plugin.json`; its install steps are shown and run
+only once you confirm, and a failed step keeps the previous version. The core
+only knows a plugin by the **capabilities** it declares: with `ile`, the CLI
+connects to the island; with `notifications`, study reminders pop up there
+instead of as a system notification. Contract and catalogue format:
+[`plugins/README.md`](plugins/README.md).
+
+---
+
+## MCP client — external tools inside Axon
+
 
 The reverse direction: Axon connects to third-party MCP servers and their tools
 become indistinguishable from native ones — same routing, same execution path.
@@ -436,36 +508,6 @@ A failing MCP tool returns an explicit tool error rather than a result: some
 servers answer with `isError=False` while their backend is down, and the model
 must not reason on a failure message as if it were data.
 
-### API server — Axon as the AI
-
-Makes Axon itself the talking LLM in your IDE (OpenAI-compatible).
-
-```bash
-python src/api_server.py    # → http://127.0.0.1:8765/v1
-```
-
-**Zed** (`~/.config/zed/settings.json`):
-```json
-"language_models": {
-  "openai": {
-    "api_url": "http://127.0.0.1:8765/v1",
-    "available_models": [
-      {"name": "axon", "max_tokens": 128000, "max_output_tokens": 8192}
-    ]
-  }
-}
-```
-
-**Continue.dev** (`config.json`):
-```json
-{"models": [{"title": "Axon", "provider": "openai", "model": "axon",
-             "apiBase": "http://127.0.0.1:8765/v1", "apiKey": "axon"}]}
-```
-
-Slash commands available from Zed (prefix with a space to bypass Zed's own `/` picker):
-` /keys` · ` /backend gemini` · ` /model` · ` /graph` · ` /build project` · ` /help`
-
----
 
 ## Agents & integrations
 
@@ -482,6 +524,7 @@ Slash commands available from Zed (prefix with a space to bypass Zed's own `/` p
 | **Code** | coding specialist HITL, plan, propose_file_change, /build phases |
 | **Notebooks** | notebook_read, notebook_edit_cell, notebook_insert_cell, notebook_run |
 | **Visuals** | Mermaid (diagrams → HTML), create_slides (Reveal.js + PPTX), /fiche, /exo |
+| **Study** | trackers, resources, deadlines, exercises/tasks, progress log, reminders, read-only project checks |
 | **Google Slides** | slides_create, slides_add_slide, slides_from_markdown (online decks only) |
 | **Code graph** | graph_affected, graph_explain, graph_path, graph_query (graphify) |
 | **Scheduled** | schedule_task + cron daemon (delivery to terminal, Slack or email) |
@@ -497,8 +540,8 @@ Slash commands available from Zed (prefix with a space to bypass Zed's own `/` p
 | `/paste` | Paste from clipboard |
 | `/attachments` | List pending attachments |
 | `/detach [file]` | Remove an attachment (or all) |
-| `/fiche` | Generate an HTML study sheet from attached PDFs |
-| `/exo` | Generate interactive exercises from attached PDFs |
+| `/fiche [suivi_id]` | Generate an HTML study sheet from attached PDFs, or from a tracker's documents |
+| `/exo [suivi_id]` | Generate interactive exercises, same sources as `/fiche` |
 | `/letter` | Generate a cover letter (CV + job offer) |
 | `/upgrade` | Improve an existing letter |
 | `/spec` | Interactive wizard to generate a `spec.md` for a new project |
@@ -631,12 +674,15 @@ ollama pull qwen2.5:7b          # Local backend (optional)
 ## Tests
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m pytest tests/ -q
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -q     # use venv/ if your install has no .venv
+# the island's own tests (types + front-end) live in its repository: npm run check && npm test
 ```
 
-**3901 tests**. The suite covers tool routing (two reference corpora, one of
-them held out from tuning), provider error recovery, MCP invariants, prompt
-invariants, and identity resolution.
+**~4,570 tests**, plus the island's own front-end suite. They cover tool
+routing (two reference corpora, one of them held out from tuning), provider
+error recovery, MCP invariants, prompt invariants, identity resolution, and
+the study domain end to end — store, tools, reminder rescheduling, the
+island's socket protocol and the CLI handlers behind it.
 
 ---
 
@@ -644,7 +690,7 @@ invariants, and identity resolution.
 
 ```
 ai-agent/
-├── install.sh / setup.sh          # Installation & configuration
+├── install.sh / setup.sh / setup.ps1   # Installation (Linux, macOS / Windows)
 ├── configs/base.yaml
 ├── .env.sample
 ├── AXON.md                        # (create this) Auto-injected project context
@@ -656,6 +702,8 @@ ai-agent/
 └── src/
     ├── ui/                        # Terminal (streaming, commands, completer, attachments)
     │   ├── journal.py             #   one action, one line — verbs, targets, outcomes
+    │   ├── pont_overlay.py        #   socket client to the island (stdlib only)
+    │   ├── raccourcis_overlay.py  #   read-only shortcuts behind the island's dashboards
     │   └── ascii/                 #   right-anchored page previews and animations
     ├── orchestrator/              # LangGraph graph + the questions it delegates:
     │   ├── graph.py               #   wiring and the chat node
@@ -669,9 +717,6 @@ ai-agent/
     │   └── prompts/               #   one file per prompt (orchestrator, spec review, cron…)
     ├── skills/                    # Skill loader and scoping (content lives in skills/)
     ├── mcp_client/                # MCP client: connection, adapter, registry, /mcp
-    ├── api/                       # OpenAI-compatible API server (models, streaming, commands)
-    ├── api_server.py              # FastAPI entry point (port 8765)
-    ├── mcp_server.py              # MCP stdio server (Zed, Claude Desktop, Cursor)
     ├── cron_daemon.py             # Scheduled task runner
     ├── infra/                     # Settings, cache, redactor, browser, auth, failure log
     └── agents/
@@ -682,7 +727,8 @@ ai-agent/
         ├── slides/                # Reveal.js + PPTX renderer
         ├── mermaid/               # Diagram generation (flowchart, sequence, ER, C4…)
         ├── notebook/              # Jupyter HITL editing (read/edit/insert/run)
-        ├── study/                 # HTML study sheets & exercises
+        ├── study/                 # Study tracking: store.py + tools_{suivi,echeance,progression,verification}.py,
+        │                          #   sheet/exercise generation in tools.py
         ├── cron/                  # Scheduled tasks
         ├── gmail/ · google_calendar/ · google_drive/ · google_doc/ · google_slide/ · google_sheet/
         ├── jira/ · slack/ · email/

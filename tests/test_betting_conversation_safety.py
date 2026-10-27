@@ -653,7 +653,7 @@ def test_les_reponses_honnetes_ne_sont_jamais_bloquees(texte):
 def test_l_advisor_est_atteignable_depuis_le_graphe():
     """Le premier bypass : `axon recommend` était lié à `sys.argv`, jamais exposé
     comme outil. 90 tools, aucun n'atteignait l'Advisor."""
-    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.routage.registry import build_all_tools
 
     noms = {t.name for t in build_all_tools()}
 
@@ -662,7 +662,7 @@ def test_l_advisor_est_atteignable_depuis_le_graphe():
 
 def test_le_tool_de_recommandation_est_routable():
     """Un outil enregistré mais jamais élu par le routeur reste inaccessible."""
-    from src.orchestrator.tool_retriever import TOOL_GROUPS
+    from src.orchestrator.routage.tool_retriever import TOOL_GROUPS
 
     assert "betting_recommend" in TOOL_GROUPS["quant"].tools
 
@@ -751,15 +751,25 @@ def test_le_daemon_cron_partage_le_meme_chemin_et_le_meme_garde():
 
 
 def test_le_garde_est_cable_dans_le_noeud_final():
-    """Un garde non appelé est un commentaire."""
+    """Un garde non appelé est un commentaire.
+
+    Le garde a quitté `graph.py` : le nœud `chatbot` vit désormais dans
+    `noeuds/chat.py`, et le garde lui-même est le `garde_du_domaine` générique
+    de `corrections.py`, qui appelle `enforce`. Ce test suit ce déplacement —
+    il vérifie que le garde est TOUJOURS invoqué, à sa nouvelle place.
+    """
     import inspect
 
-    from src.orchestrator import graph
+    from src.orchestrator.modele import corrections
+    from src.orchestrator.noeuds import chat
 
-    source = inspect.getsource(graph)
+    # 1. `garde_du_domaine` appelle bien `enforce` et lit son verdict.
+    garde = inspect.getsource(corrections)
+    assert "conversation.guard import" in garde and "enforce" in garde
+    assert "verdict.blocked" in garde
 
-    assert "conversation.guard import enforce" in source
-    assert "_verdict.blocked" in source
+    # 2. Le nœud final APPELLE ce garde — sinon il resterait un commentaire.
+    assert "_garde_du_domaine(" in inspect.getsource(chat)
 
 
 # ══ §8 — Les faits sur le monde, pas seulement l'argent ══════════════════════
@@ -1055,7 +1065,7 @@ def test_sans_bankroll_l_outil_nomme_le_champ_manquant():
     sur la seule chose qui restait avant : espérer que le modèle lise la consigne
     en prose et appelle l'outil de son plein gré. Mesuré : il ne le fait pas.
     """
-    from src.orchestrator.clarification import champs_manquants
+    from src.orchestrator.noeuds.clarification import champs_manquants
 
     session.reset()
     charge, _ = _appel_outil(when="aujourd'hui", sports=["tennis"],

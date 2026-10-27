@@ -14,8 +14,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from src.orchestrator.hitl import PLAN, demande_en_attente, reponse
-from src.orchestrator.plan import (
+from src.orchestrator.commun.hitl import PLAN, demande_en_attente, reponse
+from src.orchestrator.noeuds.plan import (
     ABANDONNER,
     EXECUTER,
     FERME,
@@ -133,7 +133,7 @@ def test_seul_le_libelle_exact_lance_l_execution(mode_plan, decision):
 def test_la_decision_arrive_comme_une_entree_utilisateur():
     """Un `AIMessage` serait diffusé par le TUI et relu par le modèle comme son
     propre tour — le défaut trouvé en session sur l'envoi de mail."""
-    from src.orchestrator.plan import note_pour_le_modele
+    from src.orchestrator.noeuds.plan import note_pour_le_modele
 
     assert isinstance(note_pour_le_modele("x"), HumanMessage)
     assert not isinstance(note_pour_le_modele("x"), AIMessage)

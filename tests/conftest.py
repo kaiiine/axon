@@ -59,3 +59,11 @@ def offline_gateway(tmp_path, monkeypatch):
 
     monkeypatch.setattr(FootballDataOrgProvider, "_get", fake_get)
     yield
+
+
+@pytest.fixture(autouse=True)
+def journal_des_echecs_isole(tmp_path, monkeypatch):
+    """Les échecs simulés par les tests ne vont pas dans le vrai
+    `~/.axon/backend_failures.jsonl` : ils s'y mêlaient aux vraies pannes."""
+    from src.infra import failure_log
+    monkeypatch.setattr(failure_log, "LOG_PATH", tmp_path / "backend_failures.jsonl")
